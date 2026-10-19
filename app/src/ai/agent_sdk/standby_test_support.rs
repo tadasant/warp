@@ -257,11 +257,13 @@ pub(super) fn execution_config() -> ExecutionConfiguration {
     }
 }
 
-pub(super) fn assignment(id: &str, clock: &TestClock) -> PrewarmedSandboxControlEvent {
+pub(super) fn assignment(execution_id: &str, clock: &TestClock) -> PrewarmedSandboxControlEvent {
     PrewarmedSandboxControlEvent::Assignment {
-        assignment_id: id.into(),
         generation: "abc123".into(),
-        execution_config: Box::new(execution_config()),
+        execution_config: Box::new(ExecutionConfiguration {
+            execution_id: execution_id.into(),
+            ..execution_config()
+        }),
         runtime_env: Default::default(),
         api_key: "test-run-key".into(),
         expires_at: clock.now() + TimeDelta::minutes(10),

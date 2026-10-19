@@ -286,7 +286,6 @@ async fn maintain_standby_connection<'a>(
 }
 
 struct Assignment {
-    assignment_id: String,
     execution_config: ExecutionConfiguration,
     runtime_env: HashMap<String, String>,
     api_key: String,
@@ -316,7 +315,6 @@ async fn wait_for_assignment<P>(
             result = preparation => prepared = Some(result?),
             event = events.recv().fuse() => match event.context("Standby control ended")? {
                 PrewarmedSandboxControlEvent::Assignment {
-                    assignment_id,
                     generation: assigned_generation,
                     execution_config,
                     runtime_env,
@@ -325,7 +323,7 @@ async fn wait_for_assignment<P>(
                 } => {
                     if let Some(held) = &held {
                         anyhow::ensure!(
-                            held.assignment_id == assignment_id,
+                            held.execution_config.execution_id == execution_config.execution_id,
                             "A second assignment arrived before the first was installed"
                         );
                         continue;
@@ -336,7 +334,6 @@ async fn wait_for_assignment<P>(
                     );
                     anyhow::ensure!(expires_at > (clock.now)(), "Assignment deadline has expired");
                     held = Some(Assignment {
-                        assignment_id,
                         execution_config: *execution_config,
                         runtime_env,
                         api_key,
@@ -380,7 +377,7 @@ async fn wait_in_standby<'a, P>(
 /// this sandbox, which is also when it revokes the standby credential. Returns `false` when the
 /// server reports the run is no longer active, in which case it must not start.
 async fn confirm_delivery<'a>(
-    assignment_id: &str,
+    execution_id: &str,
     connect: &mut impl FnMut() -> BoxFuture<'a, ConnectionAttempt>,
     clock: &StandbyClock,
 ) -> anyhow::Result<bool> {
@@ -391,11 +388,11 @@ async fn confirm_delivery<'a>(
                 loop {
                     match bounded_control(clock, connection.events.next()).await {
                         Ok(Some(Ok(PrewarmedSandboxControlEvent::Assignment {
-                            assignment_id: replayed,
+                            execution_config: replayed,
                             ..
                         }))) => {
                             anyhow::ensure!(
-                                replayed == assignment_id,
+                                replayed.execution_id.inner() == execution_id,
                                 "The server replayed a different assignment"
                             );
                             return Ok(true);
@@ -430,7 +427,7 @@ async fn run_lifecycle<'a, P, R>(
     else {
         return Ok(());
     };
-    let assignment_id = assignment.assignment_id.clone();
+    let execution_id = assignment.execution_config.execution_id.inner().to_owned();
     let deadline = (clock.sleep)(wait_window(assignment.expires_at, (clock.now)())).fuse();
     futures::pin_mut!(deadline);
     let installed = {
@@ -442,7 +439,7 @@ async fn run_lifecycle<'a, P, R>(
         }
     };
     let delivered = {
-        let confirm = confirm_delivery(&assignment_id, &mut connect, clock).fuse();
+        let confirm = confirm_delivery(&execution_id, &mut connect, clock).fuse();
         let window = (clock.sleep)(DELIVERY_CONFIRMATION_WINDOW).fuse();
         futures::pin_mut!(confirm, window);
         futures::select_biased! {
@@ -454,7 +451,7 @@ async fn run_lifecycle<'a, P, R>(
     if !delivered {
         safe_info!(
             safe: ("Pre-warmed sandbox run is no longer active; exiting without running it"),
-            full: ("Pre-warmed sandbox assignment {assignment_id} is no longer active; exiting without running it")
+            full: ("Pre-warmed sandbox assignment for execution {execution_id} is no longer active; exiting without running it")
         );
         return Ok(());
     }

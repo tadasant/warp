@@ -242,7 +242,6 @@ struct PrewarmedSandboxStatusInput {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PrewarmedSandboxControlEvent {
     Assignment {
-        assignment_id: String,
         generation: String,
         execution_config: Box<ExecutionConfiguration>,
         runtime_env: HashMap<String, String>,
@@ -260,7 +259,6 @@ impl fmt::Debug for PrewarmedSandboxControlEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Assignment {
-                assignment_id,
                 generation,
                 execution_config,
                 runtime_env,
@@ -268,7 +266,6 @@ impl fmt::Debug for PrewarmedSandboxControlEvent {
                 expires_at,
             } => f
                 .debug_struct("Assignment")
-                .field("assignment_id", assignment_id)
                 .field("generation", generation)
                 .field("run_id", &execution_config.task_id.inner())
                 .field("execution_id", &execution_config.execution_id.inner())

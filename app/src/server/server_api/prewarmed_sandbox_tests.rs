@@ -450,7 +450,6 @@ fn fresh_assignment_fixture_decodes_nullable_control_fields() {
     let fixture = include_str!("testdata/prewarmed_assignment_fresh_run.json");
     let event: PrewarmedSandboxControlEvent = serde_json::from_str(fixture).unwrap();
     let PrewarmedSandboxControlEvent::Assignment {
-        assignment_id,
         generation,
         execution_config,
         runtime_env,
@@ -460,12 +459,12 @@ fn fresh_assignment_fixture_decodes_nullable_control_fields() {
     else {
         panic!("expected assignment event");
     };
-    assert_eq!(assignment_id, "assign-123");
     assert_eq!(generation, "generation-abc");
     assert_eq!(
         execution_config.task_id.inner(),
         "550e8400-e29b-41d4-a716-446655440000"
     );
+    assert_eq!(execution_config.execution_id.inner(), "42");
     assert_eq!(runtime_env["WARP_SANDBOX_DEADLINE"], "1767225600");
     assert!(execution_config.conversation_id.is_none());
     assert!(execution_config.repositories[0].ref_.is_none());
