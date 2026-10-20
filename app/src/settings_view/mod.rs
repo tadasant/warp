@@ -577,6 +577,7 @@ pub mod flags {
     pub const AI_CATALOG_DISCOVERY_OFF: &str = "AiCatalog_Discovery_Off";
     pub const AI_CATALOG_DISCOVERY_LIGHT_TOUCH: &str = "AiCatalog_Discovery_LightTouch";
     pub const AI_CATALOG_DISCOVERY_FULL: &str = "AiCatalog_Discovery_Full";
+    pub const AI_CATALOG_BACKGROUND_DISCOVERY: &str = "AiCatalog_Background_Discovery";
     pub const THINKING_DISPLAY_SHOW_AND_COLLAPSE: &str = "Thinking_Display_ShowAndCollapse";
     pub const THINKING_DISPLAY_ALWAYS_SHOW: &str = "Thinking_Display_AlwaysShow";
     pub const THINKING_DISPLAY_NEVER_SHOW: &str = "Thinking_Display_NeverShow";

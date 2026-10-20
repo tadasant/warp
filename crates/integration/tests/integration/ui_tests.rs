@@ -389,6 +389,8 @@ integration_tests! {
     // modelcontextprotocol.io MCP endpoint, run manually
     #[ignore = "Manual test: requires real display and network access"]
     test_ai_catalog_discovery,
+    #[ignore = "Manual test: requires real display and network access"]
+    test_ai_catalog_background_discovery,
 
     // Rich Input Ctrl+Enter submit toggle (issue #11588)
     test_rich_input_toggle_on_enter_inserts_newline_and_ctrl_enter_submits,

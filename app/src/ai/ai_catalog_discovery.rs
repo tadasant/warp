@@ -89,11 +89,13 @@ pub struct AiCatalogDiscoveryModel {
     /// the next attempt collects a bearer token.
     token_fallback: HashSet<String>,
     install_status: Option<InstallStatus>,
+    /// Why the background reasoner suggested a discovery, keyed by discovery id.
+    suggestion_reasons: HashMap<String, String>,
 }
 
 impl AiCatalogDiscoveryModel {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        Self::new_with_resolver(Arc::new(resolver_from_env()), ctx)
+        Self::new_with_resolver(default_resolver(), ctx)
     }
 
     pub fn new_with_resolver(
@@ -129,6 +131,7 @@ impl AiCatalogDiscoveryModel {
             installs: HashMap::new(),
             token_fallback: HashSet::new(),
             install_status: None,
+            suggestion_reasons: HashMap::new(),
         }
     }
 
@@ -138,6 +141,33 @@ impl AiCatalogDiscoveryModel {
 
     pub fn discovery(&self, discovery_id: &str) -> Option<&Discovery> {
         self.state.get(discovery_id)
+    }
+
+    /// Adds discoveries found without the agent touching `domain` (e.g. by background
+    /// reasoning), labelled with `reason`. Returns the ones that are newly pending.
+    pub fn add_suggested_discoveries(
+        &mut self,
+        domain: &str,
+        discoveries: Vec<Discovery>,
+        reason: String,
+        ctx: &mut ModelContext<Self>,
+    ) -> Vec<Discovery> {
+        self.state.begin_probe(domain);
+        let fresh = self.state.finish_probe(domain, discoveries);
+        for discovery in &fresh {
+            self.suggestion_reasons
+                .insert(discovery.id.clone(), reason.clone());
+        }
+        if !fresh.is_empty() {
+            ctx.emit(AiCatalogDiscoveryEvent::Changed);
+        }
+        fresh
+    }
+
+    pub fn suggestion_reason(&self, discovery_id: &str) -> Option<&str> {
+        self.suggestion_reasons
+            .get(discovery_id)
+            .map(String::as_str)
     }
 
     pub fn install_status(&self) -> Option<&InstallStatus> {
@@ -358,15 +388,16 @@ fn current_mode(ctx: &ModelContext<AiCatalogDiscoveryModel>) -> DiscoveryMode {
     mode.as_discovery_mode()
 }
 
-fn resolver_from_env() -> DefaultResolver {
+/// The resolver configured by `WARP_AI_CATALOG_*` env vars.
+pub fn default_resolver() -> Arc<dyn CatalogResolver> {
     if std::env::var_os(DISABLE_HTTP_ENV).is_some() {
-        return DefaultResolver::new(None);
+        return Arc::new(DefaultResolver::new(None));
     }
     let mut http = HttpResolver::default();
     if let Ok(overrides) = std::env::var(ORIGIN_OVERRIDES_ENV) {
         http = http.with_origin_overrides_from_str(&overrides);
     }
-    DefaultResolver::new(Some(http))
+    Arc::new(DefaultResolver::new(Some(http)))
 }
 
 /// Owned form of [`DomainObservation`] so observations can outlive the history model borrow.

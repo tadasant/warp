@@ -12,6 +12,8 @@ pub(crate) mod agent_tips;
 pub(crate) mod ai_catalog_banner;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod ai_catalog_discovery;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod ai_catalog_reasoner;
 pub(crate) mod ai_document_view;
 pub mod ambient_agents;
 pub(crate) mod artifact_download;

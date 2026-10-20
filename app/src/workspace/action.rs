@@ -403,6 +403,10 @@ pub enum WorkspaceAction {
     InstallDiscoveredMcpServer {
         discovery_id: String,
     },
+    /// Opens the full trace of a background AI Catalog discovery run in a new tab.
+    OpenAiCatalogDiscoveryTrace {
+        run_id: usize,
+    },
     /// Copies a path to the clipboard based on the focused pane: the open file's display path
     /// if the focused pane is the rendered file viewer (`FilePane`), otherwise the focused
     /// terminal session's working directory. No-op if neither yields a path.
@@ -1108,6 +1112,7 @@ impl WorkspaceAction {
             | ToggleWelcomeTips
             | CopyTextToClipboard(_)
             | InstallDiscoveredMcpServer { .. }
+            | OpenAiCatalogDiscoveryTrace { .. }
             | CopyCurrentPath
             | CopyAccessTokenToClipboard
             | OpenTabConfigRepoPicker { .. }

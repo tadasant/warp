@@ -1,4 +1,5 @@
-//! Install flow for MCP servers discovered from a domain's AI Catalog (SEP-2127).
+//! Install flow for MCP servers discovered from AI Catalogs (SEP-2127), and the background
+//! discovery trace view.
 
 use std::collections::HashMap;
 
@@ -9,6 +10,7 @@ use warpui::{SingletonEntity, ViewContext};
 
 use super::Workspace;
 use crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel;
+use crate::ai::ai_catalog_reasoner::AiCatalogReasonerModel;
 use crate::ai::mcp::{JsonTemplate, TemplatableMCPServer, TemplateVariable, VariableValue};
 use crate::modal::{Modal, ModalEvent, ModalViewState};
 use crate::settings_view::mcp_servers::installation_modal::{
@@ -207,4 +209,33 @@ fn secret_from_values(
 ) -> Option<String> {
     let variable = server.template.variables.first()?;
     values.get(&variable.key).map(|value| value.value.clone())
+}
+
+impl Workspace {
+    /// Writes the run's trace to a Markdown file and opens it in a new tab.
+    pub(super) fn open_ai_catalog_discovery_trace(
+        &mut self,
+        run_id: usize,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(markdown) = AiCatalogReasonerModel::as_ref(ctx)
+            .run(run_id)
+            .map(|run| run.trace_markdown())
+        else {
+            self.show_ai_catalog_error_toast(
+                "That discovery trace is no longer available.".to_string(),
+                ctx,
+            );
+            return;
+        };
+        let path = std::env::temp_dir().join(format!("warp-ai-catalog-trace-{run_id}.md"));
+        if let Err(err) = std::fs::write(&path, markdown) {
+            self.show_ai_catalog_error_toast(
+                format!("Couldn't write the discovery trace: {err}"),
+                ctx,
+            );
+            return;
+        }
+        self.add_tab_for_code_file(path, None, ctx);
+    }
 }

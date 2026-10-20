@@ -2127,6 +2127,20 @@ define_settings_group!(AISettings, settings: [
     // Which domains touched by agent sessions are probed for MCP Server Cards. Off by default.
     ai_catalog_discovery_mode: AiCatalogDiscoveryMode,
 
+    // Whether a background reasoner infers relevant vendor domains from the conversation and
+    // suggests the MCP servers their AI Catalogs advertise. Off by default.
+    ai_catalog_background_discovery_enabled: AiCatalogBackgroundDiscoveryEnabled {
+        type: bool,
+        default: false,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "agents.mcp_servers.ai_catalog_background_discovery_enabled",
+        description: "Whether a background reasoner suggests MCP servers from the AI Catalogs of \
+            vendor domains it infers from the conversation.",
+    }
+
     // Controls how agent thinking/reasoning traces are displayed.
     thinking_display_mode: ThinkingDisplayMode,
 
