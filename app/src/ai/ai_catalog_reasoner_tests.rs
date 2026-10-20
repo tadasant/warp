@@ -134,10 +134,8 @@ fn pending_ids(app: &App) -> Vec<String> {
 fn user_prompt_runs_reasoner_and_suggests_inferred_server() {
     App::test((), |mut app| async move {
         let catalog = FixtureCatalogServer::start(0, None).unwrap();
-        let resolver: Arc<dyn CatalogResolver> = Arc::new(
-            HttpResolver::new(http_client::Client::new_external())
-                .with_origin_override("github.com", catalog.origin()),
-        );
+        let resolver: Arc<dyn CatalogResolver> =
+            Arc::new(HttpResolver::default().with_origin_override("github.com", catalog.origin()));
         let (stub, llm) = stub_llm(GITHUB_VERDICT);
         setup(&mut app, true, Some(llm), resolver);
 
@@ -220,6 +218,43 @@ fn no_relevant_vendor_records_nothing_to_suggest() {
                 .starts_with("Nothing to suggest")
         );
         assert!(pending_ids(&app).is_empty());
+    });
+}
+
+#[test]
+fn already_probed_domains_are_not_probed_again() {
+    App::test((), |mut app| async move {
+        let catalog = FixtureCatalogServer::start(0, None).unwrap();
+        let resolver: Arc<dyn CatalogResolver> =
+            Arc::new(HttpResolver::default().with_origin_override("github.com", catalog.origin()));
+        let (_stub, llm) = stub_llm(GITHUB_VERDICT);
+        setup(&mut app, true, Some(llm), resolver);
+
+        submit_user_query(&mut app, "go to my github and triage my open PRs");
+        wait_for_finished_run(&app).await;
+        submit_user_query(&mut app, "now look at the issues on my github too");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let second = loop {
+            let runs =
+                AiCatalogReasonerModel::handle(&app).read(&app, |model, _| model.runs().to_vec());
+            if runs.len() == 2 && runs[1].status != ReasonerRunStatus::Running {
+                break runs[1].clone();
+            }
+            assert!(Instant::now() < deadline, "second run did not finish");
+            Timer::after(Duration::from_millis(20)).await;
+        };
+        assert!(second.steps.iter().any(|step| matches!(
+            step,
+            TraceStep::Probe { probes, .. }
+                if probes[0].outcome == "skipped: already probed this session"
+        )));
+        assert!(
+            second
+                .summary
+                .as_deref()
+                .unwrap()
+                .starts_with("Nothing new to suggest")
+        );
     });
 }
 

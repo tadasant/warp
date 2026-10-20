@@ -12,8 +12,9 @@ use ai_catalog::reasoner::{
     AnthropicLlm, CandidateDomain, ReasonerLlm, SYSTEM_PROMPT, TraceStep, build_user_prompt,
     parse_verdict, trace_to_markdown,
 };
+use ai_catalog::resolver::AI_CATALOG_PATH;
 use ai_catalog::trust::{NudgeOnlyPolicy, SuggestionOrigin, TrustPolicy};
-use ai_catalog::{CatalogResolver, Discovery, TracedResolution};
+use ai_catalog::{CatalogResolver, Discovery, ProbeRecord, TracedResolution};
 use itertools::Itertools as _;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
@@ -22,6 +23,7 @@ use crate::ai::agent::{
 };
 use crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel;
 use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
+use crate::server::telemetry::secret_redaction::redact_secrets_in_string;
 use crate::settings::AISettings;
 
 /// Most recent exchanges included in the reasoner's view of the conversation.
@@ -127,7 +129,8 @@ impl AiCatalogReasonerModel {
     }
 
     fn is_enabled(ctx: &ModelContext<Self>) -> bool {
-        *AISettings::as_ref(ctx).ai_catalog_background_discovery_enabled
+        let settings = AISettings::as_ref(ctx);
+        *settings.ai_catalog_background_discovery_enabled && settings.is_any_ai_enabled(ctx)
     }
 
     fn handle_history_event(
@@ -161,7 +164,7 @@ impl AiCatalogReasonerModel {
             return;
         }
         let transcript = transcript_for(conversation.root_task_exchanges().collect_vec());
-        self.start_run(query, transcript, ctx);
+        self.start_run(redacted(query), transcript, ctx);
     }
 
     /// Starts a background run for the user's latest prompt. Returns the run id.
@@ -278,10 +281,30 @@ impl AiCatalogReasonerModel {
             return;
         }
 
-        for candidate in &candidates {
-            if !self.probed_domains.contains(&candidate.domain) {
-                self.probed_domains.push(candidate.domain.clone());
+        let (already_probed, candidates): (Vec<_>, Vec<_>) = candidates
+            .into_iter()
+            .partition(|candidate| self.probed_domains.contains(&candidate.domain));
+        self.update_run(run_id, ctx, |run| {
+            for candidate in &already_probed {
+                run.steps.push(TraceStep::Probe {
+                    domain: candidate.domain.clone(),
+                    probes: vec![ProbeRecord {
+                        url: format!("https://{}{}", candidate.domain, AI_CATALOG_PATH),
+                        outcome: "skipped: already probed this session".to_string(),
+                    }],
+                });
             }
+        });
+        if candidates.is_empty() {
+            self.finish_run(
+                run_id,
+                "Nothing new to suggest: every candidate domain was already probed".to_string(),
+                ctx,
+            );
+            return;
+        }
+        for candidate in &candidates {
+            self.probed_domains.push(candidate.domain.clone());
         }
         let resolver = self.resolver.clone();
         ctx.spawn(
@@ -372,17 +395,26 @@ fn transcript_for(exchanges: Vec<&AIAgentExchange>) -> String {
     let mut lines = Vec::new();
     for exchange in &exchanges[start..] {
         if let Some(query) = user_query(exchange) {
-            lines.push(format!("User: {}", truncate(&query)));
+            lines.push(format!("User: {}", truncate(&redacted(query))));
         }
         if let Some(output) = exchange.output_status.output() {
             for message in &output.get().messages {
                 if let AIAgentOutputMessageType::Text(_) = &message.message {
-                    lines.push(format!("Agent: {}", truncate(&message.to_string())));
+                    lines.push(format!(
+                        "Agent: {}",
+                        truncate(&redacted(message.to_string()))
+                    ));
                 }
             }
         }
     }
     lines.join("\n")
+}
+
+/// Masks anything that looks like a secret before text leaves the machine or lands in a trace.
+fn redacted(mut text: String) -> String {
+    redact_secrets_in_string(&mut text);
+    text
 }
 
 fn truncate(text: &str) -> String {

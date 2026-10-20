@@ -228,14 +228,26 @@ impl Workspace {
             );
             return;
         };
-        let path = std::env::temp_dir().join(format!("warp-ai-catalog-trace-{run_id}.md"));
-        if let Err(err) = std::fs::write(&path, markdown) {
-            self.show_ai_catalog_error_toast(
+        match write_private_trace_file(run_id, &markdown) {
+            Ok(path) => self.add_tab_for_code_file(path, None, ctx),
+            Err(err) => self.show_ai_catalog_error_toast(
                 format!("Couldn't write the discovery trace: {err}"),
                 ctx,
-            );
-            return;
+            ),
         }
-        self.add_tab_for_code_file(path, None, ctx);
     }
+}
+
+/// Writes `markdown` to a new, randomly named file readable only by the current user (the trace
+/// contains conversation text).
+fn write_private_trace_file(run_id: usize, markdown: &str) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+
+    let mut file = tempfile::Builder::new()
+        .prefix(&format!("warp-ai-catalog-trace-{run_id}-"))
+        .suffix(".md")
+        .tempfile()?;
+    file.write_all(markdown.as_bytes())?;
+    let (_, path) = file.keep().map_err(|err| err.error)?;
+    Ok(path)
 }

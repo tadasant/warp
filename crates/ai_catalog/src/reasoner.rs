@@ -19,6 +19,21 @@ const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const SERVER_SIDE_FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+const EFFORT_MODELS: &[&str] = &[
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-fable-5-1",
+    "claude-fable-5",
+    "claude-haiku-5-5",
+];
+const SERVER_SIDE_FALLBACK_MODELS: &[&str] = &[
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+    "claude-fable-5-1",
+];
 /// Most domains the reasoner may ask to probe per run.
 pub const MAX_CANDIDATE_DOMAINS: usize = 4;
 
@@ -168,12 +183,11 @@ impl AnthropicLlm {
             "messages": [{ "role": "user", "content": user }],
         });
         // Effort and server-side fallback aren't accepted by every model; send them only to the
-        // models that take them.
-        if self.model.starts_with("claude-opus-5")
-            || self.model.starts_with("claude-sonnet-5")
-            || self.model.starts_with("claude-fable-5")
-        {
+        // models documented to take them.
+        if EFFORT_MODELS.contains(&self.model.as_str()) {
             body["output_config"] = serde_json::json!({ "effort": "low" });
+        }
+        if SERVER_SIDE_FALLBACK_MODELS.contains(&self.model.as_str()) {
             body["fallbacks"] = serde_json::json!("default");
         }
         body
