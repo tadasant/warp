@@ -21,6 +21,8 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_BUILD_JOBS: 4
   CARGO_TARGET_DIR: /mnt/target
+  # Opt in to the tests that hit the live https://github.com/.well-known/ai-catalog.json.
+  AI_CATALOG_LIVE: 1
 
 jobs:
   validate:
