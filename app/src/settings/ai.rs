@@ -535,6 +535,72 @@ impl DefaultSessionMode {
     }
 }
 
+/// Which domains touched by agent sessions are probed for an AI Catalog (SEP-2127).
+#[derive(
+    Default,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialEq,
+    Eq,
+    Copy,
+    Clone,
+    EnumIter,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[schemars(
+    description = "Which domains touched by agent sessions are probed for MCP Server Cards.",
+    rename_all = "snake_case"
+)]
+pub enum AiCatalogDiscoveryMode {
+    /// Never probe domains.
+    #[default]
+    Off,
+    /// Probe domains from web fetch / web search and fetch-like MCP tool calls.
+    LightTouch,
+    /// Probe every domain that appears in any agent tool call.
+    Full,
+}
+
+settings::macros::implement_setting_for_enum!(
+    AiCatalogDiscoveryMode,
+    AISettings,
+    SupportedPlatforms::DESKTOP,
+    SyncToCloud::Never,
+    surface: settings::SettingSurfaces::GUI,
+    private: false,
+    toml_path: "agents.mcp_servers.ai_catalog_discovery_mode",
+    description: "Which domains touched by agent sessions are probed for an AI Catalog \
+        (/.well-known/ai-catalog.json) advertising installable MCP servers and Skills.",
+);
+
+impl AiCatalogDiscoveryMode {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AiCatalogDiscoveryMode::Off => "Off",
+            AiCatalogDiscoveryMode::LightTouch => "Light-touch",
+            AiCatalogDiscoveryMode::Full => "Full",
+        }
+    }
+
+    pub fn command_palette_description(&self) -> &'static str {
+        match self {
+            AiCatalogDiscoveryMode::Off => "Set MCP Server Card discovery: off",
+            AiCatalogDiscoveryMode::LightTouch => "Set MCP Server Card discovery: light-touch",
+            AiCatalogDiscoveryMode::Full => "Set MCP Server Card discovery: full",
+        }
+    }
+
+    pub fn as_discovery_mode(&self) -> ai_catalog::DiscoveryMode {
+        match self {
+            AiCatalogDiscoveryMode::Off => ai_catalog::DiscoveryMode::Off,
+            AiCatalogDiscoveryMode::LightTouch => ai_catalog::DiscoveryMode::LightTouch,
+            AiCatalogDiscoveryMode::Full => ai_catalog::DiscoveryMode::Full,
+        }
+    }
+}
+
 /// Controls how agent thinking/reasoning traces are displayed after streaming.
 #[derive(
     Default,
@@ -2057,6 +2123,9 @@ define_settings_group!(AISettings, settings: [
         toml_path: "agents.mcp_servers.file_based_mcp_enabled",
         description: "Whether third-party file-based MCP servers are automatically detected.",
     }
+
+    // Which domains touched by agent sessions are probed for MCP Server Cards. Off by default.
+    ai_catalog_discovery_mode: AiCatalogDiscoveryMode,
 
     // Controls how agent thinking/reasoning traces are displayed.
     thinking_display_mode: ThinkingDisplayMode,

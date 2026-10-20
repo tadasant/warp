@@ -12,6 +12,7 @@ path = "src/bin/integration.rs"
 test = false
 
 [dependencies]
+ai_catalog = { workspace = true, features = ["test-util"] }
 anyhow = "1.0"
 backtrace.workspace = true
 cfg-if.workspace = true

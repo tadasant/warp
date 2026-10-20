@@ -390,6 +390,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai_catalog"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "http_client",
+ "log",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "ai_types"
 version = "0.1.0"
 dependencies = [
@@ -7029,6 +7043,7 @@ dependencies = [
 name = "integration"
 version = "0.1.0"
 dependencies = [
+ "ai_catalog",
  "anyhow",
  "app-installation-detection",
  "backtrace",
@@ -15246,6 +15261,7 @@ dependencies = [
  "aha-reqwest-eventsource",
  "aho-corasick",
  "ai",
+ "ai_catalog",
  "ai_types",
  "alphanumeric-sort",
  "anyhow",

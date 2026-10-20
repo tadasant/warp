@@ -574,6 +574,9 @@ pub mod flags {
     pub const SHOW_AGENT_TIPS_FLAG: &str = "Show_Agent_Tips";
     pub const SHOW_OZ_UPDATES_IN_ZERO_STATE_FLAG: &str = "Show_Oz_Updates_In_Zero_State";
     pub const USE_AGENT_FOOTER_FLAG: &str = "Use_Agent_Footer";
+    pub const AI_CATALOG_DISCOVERY_OFF: &str = "AiCatalog_Discovery_Off";
+    pub const AI_CATALOG_DISCOVERY_LIGHT_TOUCH: &str = "AiCatalog_Discovery_LightTouch";
+    pub const AI_CATALOG_DISCOVERY_FULL: &str = "AiCatalog_Discovery_Full";
     pub const THINKING_DISPLAY_SHOW_AND_COLLAPSE: &str = "Thinking_Display_ShowAndCollapse";
     pub const THINKING_DISPLAY_ALWAYS_SHOW: &str = "Thinking_Display_AlwaysShow";
     pub const THINKING_DISPLAY_NEVER_SHOW: &str = "Thinking_Display_NeverShow";

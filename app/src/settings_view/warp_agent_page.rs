@@ -94,15 +94,16 @@ use crate::server::telemetry::{
 };
 use crate::settings::{
     AIAutoDetectionEnabled, AICommandDenylist, AISettings, AISettingsChangedEvent,
-    AgentModeQuerySuggestionsEnabled, AutoApproveBypassesCommandDenylist, AwsBedrockAutoLogin,
-    AwsBedrockCredentialsEnabled, CanUseWarpCreditsForFallback, EnableAiCommandSearchHashTrigger,
-    GeminiEnterpriseCredentialsEnabled, GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory,
-    InputSettings, IntelligentAutosuggestionsEnabled, LongRunningCommandSubmissionMode,
-    NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled, OrchestrationMessageDisplayMode,
-    PromptSubmissionMode, SharedBlockTitleGenerationEnabled,
-    ShouldRenderUseAgentToolbarForUserCommands, ShouldShowOzUpdatesInZeroState, ShowAgentTips,
-    ShowConversationHistory, ShowHintText, ThinkingDisplayMode, VOICE_INPUT_LANGUAGES,
-    VoiceInputEnabled, VoiceInputLanguage, VoiceInputToggleKey,
+    AgentModeQuerySuggestionsEnabled, AiCatalogDiscoveryMode, AutoApproveBypassesCommandDenylist,
+    AwsBedrockAutoLogin, AwsBedrockCredentialsEnabled, CanUseWarpCreditsForFallback,
+    EnableAiCommandSearchHashTrigger, GeminiEnterpriseCredentialsEnabled,
+    GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory, InputSettings,
+    IntelligentAutosuggestionsEnabled, LongRunningCommandSubmissionMode, NLDInTerminalEnabled,
+    NaturalLanguageAutosuggestionsEnabled, OrchestrationMessageDisplayMode, PromptSubmissionMode,
+    SharedBlockTitleGenerationEnabled, ShouldRenderUseAgentToolbarForUserCommands,
+    ShouldShowOzUpdatesInZeroState, ShowAgentTips, ShowConversationHistory, ShowHintText,
+    ThinkingDisplayMode, VOICE_INPUT_LANGUAGES, VoiceInputEnabled, VoiceInputLanguage,
+    VoiceInputToggleKey,
 };
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
@@ -307,6 +308,28 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
         ],
         app,
     );
+    {
+        use warpui::keymap::FixedBinding;
+
+        let mode_bindings: Vec<FixedBinding> = AiCatalogDiscoveryMode::iter()
+            .map(|mode| {
+                let context_flag = match mode {
+                    AiCatalogDiscoveryMode::Off => flags::AI_CATALOG_DISCOVERY_OFF,
+                    AiCatalogDiscoveryMode::LightTouch => flags::AI_CATALOG_DISCOVERY_LIGHT_TOUCH,
+                    AiCatalogDiscoveryMode::Full => flags::AI_CATALOG_DISCOVERY_FULL,
+                };
+                FixedBinding::empty(
+                    mode.command_palette_description(),
+                    builder(SettingsAction::WarpAgent(
+                        WarpAgentPageAction::SetAiCatalogDiscoveryMode(mode),
+                    )),
+                    context.clone() & id!(flags::IS_ANY_AI_ENABLED) & !id!(context_flag),
+                )
+                .with_group(bindings::BindingGroup::WarpAi.as_str())
+            })
+            .collect();
+        app.register_fixed_bindings(mode_bindings);
+    }
     {
         use warpui::keymap::FixedBinding;
 
@@ -658,6 +681,7 @@ pub struct WarpAgentPageView {
     agent_toolbar_inline_editor: ViewHandle<AgentToolbarInlineEditor>,
 
     thinking_display_mode_dropdown: ViewHandle<Dropdown<WarpAgentPageAction>>,
+    ai_catalog_discovery_mode_dropdown: ViewHandle<Dropdown<WarpAgentPageAction>>,
     orchestration_message_display_mode_dropdown: ViewHandle<Dropdown<WarpAgentPageAction>>,
     default_prompt_submission_mode_dropdown: ViewHandle<Dropdown<WarpAgentPageAction>>,
     lrc_submission_mode_dropdown: ViewHandle<Dropdown<WarpAgentPageAction>>,
@@ -782,6 +806,17 @@ impl WarpAgentPageView {
             thinking_display_mode_dropdown.update(ctx, |dropdown, ctx| {
                 dropdown.set_selected_by_action(
                     WarpAgentPageAction::SetThinkingDisplayMode(current_mode),
+                    ctx,
+                );
+            });
+        }
+        let ai_catalog_discovery_mode_dropdown =
+            AiCatalogDiscoveryWidget::create_mode_dropdown(ctx);
+        {
+            let current_mode = AISettings::as_ref(ctx).ai_catalog_discovery_mode;
+            ai_catalog_discovery_mode_dropdown.update(ctx, |dropdown, ctx| {
+                dropdown.set_selected_by_action(
+                    WarpAgentPageAction::SetAiCatalogDiscoveryMode(current_mode),
                     ctx,
                 );
             });
@@ -922,6 +957,16 @@ impl WarpAgentPageView {
                                 WarpAgentPageAction::SetVoiceInputLanguage(current_code),
                                 ctx,
                             )
+                        });
+                }
+                AISettingsChangedEvent::AiCatalogDiscoveryMode { .. } => {
+                    let current_mode = AISettings::as_ref(ctx).ai_catalog_discovery_mode;
+                    me.ai_catalog_discovery_mode_dropdown
+                        .update(ctx, |dropdown, ctx| {
+                            dropdown.set_selected_by_action(
+                                WarpAgentPageAction::SetAiCatalogDiscoveryMode(current_mode),
+                                ctx,
+                            );
                         });
                 }
                 AISettingsChangedEvent::ThinkingDisplayMode { .. } => {
@@ -1220,6 +1265,7 @@ impl WarpAgentPageView {
             local_only_icon_tooltip_states: Default::default(),
             agent_toolbar_inline_editor,
             thinking_display_mode_dropdown,
+            ai_catalog_discovery_mode_dropdown,
             orchestration_message_display_mode_dropdown,
             default_prompt_submission_mode_dropdown,
             lrc_submission_mode_dropdown,
@@ -2400,6 +2446,11 @@ impl WarpAgentPageView {
         }
 
         categories.push(Category::new(
+            "MCP Server Discovery",
+            vec![Box::new(AiCatalogDiscoveryWidget)],
+        ));
+
+        categories.push(Category::new(
             "Agent Attribution",
             vec![Box::new(AgentAttributionWidget::default())],
         ));
@@ -2561,6 +2612,7 @@ pub enum WarpAgentPageAction {
     ToggleShowAgentTips,
     ToggleShowOzUpdatesInZeroState,
     SetThinkingDisplayMode(ThinkingDisplayMode),
+    SetAiCatalogDiscoveryMode(AiCatalogDiscoveryMode),
     SetOrchestrationMessageDisplayMode(OrchestrationMessageDisplayMode),
     SetPromptSubmissionMode(PromptSubmissionMode),
     SetLongRunningCommandSubmissionMode(LongRunningCommandSubmissionMode),
@@ -2939,6 +2991,12 @@ impl TypedActionView for WarpAgentPageView {
                             .should_show_oz_updates_in_zero_state
                             .toggle_and_save_value(ctx)
                     );
+                });
+                ctx.notify();
+            }
+            WarpAgentPageAction::SetAiCatalogDiscoveryMode(mode) => {
+                AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.ai_catalog_discovery_mode.set_value(*mode, ctx));
                 });
                 ctx.notify();
             }
@@ -4441,6 +4499,68 @@ impl SettingsWidget for ShowConversationHistoryWidget {
             self.toggle.clone(),
             &view.local_only_icon_tooltip_states,
             app,
+        )
+    }
+}
+
+struct AiCatalogDiscoveryWidget;
+
+impl AiCatalogDiscoveryWidget {
+    fn create_mode_dropdown(
+        ctx: &mut ViewContext<WarpAgentPageView>,
+    ) -> ViewHandle<Dropdown<WarpAgentPageAction>> {
+        let items: Vec<DropdownItem<WarpAgentPageAction>> = AiCatalogDiscoveryMode::iter()
+            .map(|mode| {
+                DropdownItem::new(
+                    mode.display_name(),
+                    WarpAgentPageAction::SetAiCatalogDiscoveryMode(mode),
+                )
+            })
+            .collect();
+
+        ctx.add_typed_action_view(|ctx| {
+            let mut dropdown = Dropdown::new(ctx);
+            dropdown.set_top_bar_max_width(AI_SETTINGS_DROPDOWN_WIDTH);
+            dropdown.set_menu_width(AI_SETTINGS_DROPDOWN_WIDTH, ctx);
+            dropdown.set_menu_max_height(AI_SETTINGS_DROPDOWN_MAX_HEIGHT, ctx);
+            dropdown.add_items(items, ctx);
+            dropdown
+        })
+    }
+}
+
+impl SettingsWidget for AiCatalogDiscoveryWidget {
+    type View = WarpAgentPageView;
+
+    fn search_terms(&self) -> &str {
+        "mcp server card discovery ai catalog well-known sep-2127 skills domains auto install"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let is_any_ai_enabled = AISettings::as_ref(app).is_any_ai_enabled(app);
+        render_dropdown_item(
+            appearance,
+            "Server Card discovery",
+            Some(
+                "Watch the domains agent sessions touch and offer to install the MCP servers and \
+                 Skills they advertise via /.well-known/ai-catalog.json. Off: never probe. \
+                 Light-touch: only web fetch / search and fetch-like tool calls. Full: every \
+                 domain in any tool call, including shell commands.",
+            ),
+            None,
+            LocalOnlyIconState::for_setting(
+                AiCatalogDiscoveryMode::storage_key(),
+                AiCatalogDiscoveryMode::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            (!is_any_ai_enabled).then(|| appearance.theme().disabled_ui_text_color()),
+            &view.ai_catalog_discovery_mode_dropdown,
         )
     }
 }

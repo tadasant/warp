@@ -2397,6 +2397,11 @@ pub(crate) fn initialize_app(
         )
     });
 
+    // Subscribes to BlocklistAIHistoryModel and TemplatableMCPServerManager, so it must be
+    // registered after both.
+    #[cfg(not(target_family = "wasm"))]
+    ctx.add_singleton_model(crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel::new);
+
     // MCPGalleryManager subscribes to UpdateManager so that it can be notified when gallery items are updated.
     // The registration of this singleton must be after UpdateManager is registered.
     ctx.add_singleton_model(MCPGalleryManager::new);

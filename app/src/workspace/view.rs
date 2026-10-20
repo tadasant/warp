@@ -1,5 +1,7 @@
 pub(crate) mod agent_cli_launch_modal;
 pub(crate) mod auto_handoff_sleep_modal;
+#[cfg(not(target_family = "wasm"))]
+mod ai_catalog_install;
 mod build_plan_migration_modal;
 pub(crate) mod chatgpt_plan_modal;
 pub(crate) mod cloud_agent_capacity_modal;
@@ -1116,6 +1118,8 @@ pub struct Workspace {
         Option<PendingSessionConfigTabConfigChipTutorial>,
     onboarding_tutorial_deferred_by_modal: Option<DeferredOnboardingTutorial>,
     new_worktree_modal: ModalViewState<Modal<NewWorktreeModal>>,
+    #[cfg(not(target_family = "wasm"))]
+    ai_catalog_install_modal: ai_catalog_install::AiCatalogInstallModal,
     close_session_confirmation_dialog: ViewHandle<CloseSessionConfirmationDialog>,
     rewind_confirmation_dialog: ViewHandle<RewindConfirmationDialog>,
     delete_conversation_confirmation_dialog: ViewHandle<DeleteConversationConfirmationDialog>,
@@ -3096,6 +3100,8 @@ impl Workspace {
 
         let tab_config_params_modal = Self::build_tab_config_params_modal(ctx);
         let new_worktree_modal = Self::build_new_worktree_modal(ctx);
+        #[cfg(not(target_family = "wasm"))]
+        let ai_catalog_install_modal = Self::build_ai_catalog_install_modal(ctx);
 
         let session_config_modal = Self::build_session_config_modal(ctx);
 
@@ -3500,6 +3506,8 @@ impl Workspace {
             pending_session_config_tab_config_chip_tutorial: None,
             onboarding_tutorial_deferred_by_modal: None,
             new_worktree_modal,
+            #[cfg(not(target_family = "wasm"))]
+            ai_catalog_install_modal,
             close_session_confirmation_dialog,
             rewind_confirmation_dialog,
             delete_conversation_confirmation_dialog,
@@ -23713,6 +23721,14 @@ impl Workspace {
             context.set.insert(flags::USE_AGENT_FOOTER_FLAG);
         }
 
+        context.set.insert(match ai_settings.ai_catalog_discovery_mode {
+            crate::settings::AiCatalogDiscoveryMode::Off => flags::AI_CATALOG_DISCOVERY_OFF,
+            crate::settings::AiCatalogDiscoveryMode::LightTouch => {
+                flags::AI_CATALOG_DISCOVERY_LIGHT_TOUCH
+            }
+            crate::settings::AiCatalogDiscoveryMode::Full => flags::AI_CATALOG_DISCOVERY_FULL,
+        });
+
         match ai_settings.thinking_display_mode {
             crate::settings::ThinkingDisplayMode::ShowAndCollapse => {
                 context
@@ -25388,6 +25404,12 @@ impl TypedActionView for Workspace {
                 ctx.clipboard()
                     .write(ClipboardContent::plain_text(text.to_string()));
             }
+            #[cfg(not(target_family = "wasm"))]
+            InstallDiscoveredMcpServer { discovery_id } => {
+                self.install_discovered_mcp_server(discovery_id, ctx);
+            }
+            #[cfg(target_family = "wasm")]
+            InstallDiscoveredMcpServer { .. } => {}
             CopyCurrentPath => {
                 let path = self
                     .active_tab_pane_group()
@@ -27659,6 +27681,11 @@ impl View for Workspace {
 
         if self.new_worktree_modal.is_open() {
             stack.add_child(self.new_worktree_modal.render());
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        if self.ai_catalog_install_modal.is_open() {
+            stack.add_child(self.ai_catalog_install_modal.render());
         }
 
         if self.workflow_modal.as_ref(app).is_open() {
