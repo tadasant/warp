@@ -1,26 +1,17 @@
-//! Hand-authored catalogs standing in for `/.well-known/ai-catalog.json` documents that no public
-//! domain serves yet. Every discovery built here has `fixture = true` so the UI can label it.
+//! Hand-authored catalogs for domains that do not serve `/.well-known/ai-catalog.json` yet. Every
+//! discovery built here has `fixture = true` so the UI can label it.
 //!
 //! `modelcontextprotocol.io` maps to a minimal card for the real, auth-less MCP server at
-//! `https://modelcontextprotocol.io/mcp`: installing it connects to the live endpoint. The GitHub
-//! card (from SEP-2127 issue #34) is mocked and drives the auth-entry install flow.
+//! `https://modelcontextprotocol.io/mcp`: installing it connects to the live endpoint.
 
 use std::collections::HashMap;
 
-use crate::types::{
-    AuthRequirement, Discovery, RemoteTransport, ServerCard, SkillRef, SkillsBundle,
-};
+use crate::types::{Discovery, RemoteTransport, ServerCard, SkillRef, SkillsBundle};
 
 pub const MCP_DOCS_DOMAIN: &str = "modelcontextprotocol.io";
 pub const MCP_DOCS_ENDPOINT: &str = "https://modelcontextprotocol.io/mcp";
-pub const GITHUB_ENDPOINT: &str = "https://api.githubcopilot.com/mcp/";
 
-const FIXTURE_DOMAINS: &[&str] = &[
-    MCP_DOCS_DOMAIN,
-    "github.com",
-    "api.githubcopilot.com",
-    "api.github.com",
-];
+const FIXTURE_DOMAINS: &[&str] = &[MCP_DOCS_DOMAIN];
 
 pub fn modelcontextprotocol_card() -> ServerCard {
     ServerCard {
@@ -31,9 +22,9 @@ pub fn modelcontextprotocol_card() -> ServerCard {
             search_model_context_protocol and a read-only docs filesystem."
             .to_string(),
         icons: None,
-        repository: Some(
-            "https://github.com/modelcontextprotocol/modelcontextprotocol".to_string(),
-        ),
+        repository: Some(serde_json::json!(
+            "https://github.com/modelcontextprotocol/modelcontextprotocol"
+        )),
         website: Some("https://modelcontextprotocol.io".to_string()),
         remote: Some(RemoteTransport {
             transport_type: "streamable-http".to_string(),
@@ -42,6 +33,7 @@ pub fn modelcontextprotocol_card() -> ServerCard {
             protocol_versions: vec!["2025-06-18".to_string(), "2025-03-26".to_string()],
             auth: None,
         }),
+        remotes: Vec::new(),
         meta: serde_json::json!({
             "io.modelcontextprotocol/sep": 2127,
             "demo": "auth-less headline demo; endpoint is live"
@@ -76,41 +68,6 @@ pub fn modelcontextprotocol_skills() -> SkillsBundle {
     }
 }
 
-pub fn github_card() -> ServerCard {
-    ServerCard {
-        name: "io.github.github/github-mcp-server".to_string(),
-        version: Some("1.4.0".to_string()),
-        title: Some("GitHub MCP Server".to_string()),
-        description: "GitHub's official MCP server: repositories, issues, pull requests, \
-            Actions, and code search over the GitHub API."
-            .to_string(),
-        icons: None,
-        repository: Some("https://github.com/github/github-mcp-server".to_string()),
-        website: Some("https://github.com".to_string()),
-        remote: Some(RemoteTransport {
-            transport_type: "streamable-http".to_string(),
-            url: GITHUB_ENDPOINT.to_string(),
-            headers: HashMap::new(),
-            protocol_versions: vec!["2025-06-18".to_string()],
-            auth: Some(AuthRequirement {
-                kind: "header".to_string(),
-                header: Some("Authorization".to_string()),
-                prefix: Some("Bearer ".to_string()),
-                variable: Some("github_token".to_string()),
-                instructions: Some(
-                    "Paste a GitHub Personal Access Token with repo scope. It is sent as the \
-                     Authorization header to api.githubcopilot.com."
-                        .to_string(),
-                ),
-            }),
-        }),
-        meta: serde_json::json!({
-            "io.modelcontextprotocol/sep": 2127,
-            "demo": "mocked card from SEP-2127 issue #34; drives the auth-entry flow"
-        }),
-    }
-}
-
 /// Fixture discoveries for a normalized domain, if any.
 pub fn fixtures_for(domain: &str) -> Vec<Discovery> {
     match domain {
@@ -118,9 +75,6 @@ pub fn fixtures_for(domain: &str) -> Vec<Discovery> {
             Discovery::new_server(domain, modelcontextprotocol_card(), true),
             Discovery::new_skills(domain, modelcontextprotocol_skills(), true),
         ],
-        "github.com" | "api.githubcopilot.com" | "api.github.com" => {
-            vec![Discovery::new_server(domain, github_card(), true)]
-        }
         _ => vec![],
     }
 }

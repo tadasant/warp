@@ -9,6 +9,8 @@ pub(crate) mod agent_events;
 pub(crate) mod agent_management;
 pub(crate) mod agent_tips;
 #[cfg(not(target_family = "wasm"))]
+pub(crate) mod ai_catalog_banner;
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod ai_catalog_discovery;
 pub(crate) mod ai_document_view;
 pub mod ambient_agents;

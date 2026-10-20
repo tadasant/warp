@@ -71,8 +71,7 @@ pub fn install_plan_for_card(
     secret: Option<&str>,
 ) -> Result<InstallPlan, InstallError> {
     let remote = card
-        .remote
-        .as_ref()
+        .primary_remote()
         .ok_or(InstallError::NoRemoteTransport)?;
     let transport = match remote.transport_type.to_ascii_lowercase().as_str() {
         "streamable-http" | "streamable_http" | "http" => RemoteTransportKind::StreamableHttp,
@@ -99,6 +98,10 @@ pub fn install_plan_for_card(
             let prefix = auth.prefix.as_deref().unwrap_or_default();
             headers.insert(header, format!("{prefix}{secret}"));
         }
+    } else if let Some(secret) = secret.map(str::trim).filter(|secret| !secret.is_empty()) {
+        // Cards often omit their auth requirements (GitHub's does), so a user-supplied token
+        // for an auth-less card is sent as a bearer token.
+        headers.insert("Authorization".to_string(), format!("Bearer {secret}"));
     }
 
     Ok(InstallPlan {

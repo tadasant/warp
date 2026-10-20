@@ -6,7 +6,7 @@ use futures::executor::block_on;
 
 use super::*;
 use crate::domains::normalize_host;
-use crate::fixtures::{GITHUB_ENDPOINT, MCP_DOCS_ENDPOINT};
+use crate::fixtures::MCP_DOCS_ENDPOINT;
 use crate::install::install_plan_for_card;
 
 #[test]
@@ -143,7 +143,7 @@ fn fixture_resolver_returns_mcp_server_and_skills() {
     assert!(found.iter().all(|discovery| discovery.fixture));
     let server = found.iter().find(|d| d.is_server()).unwrap();
     assert_eq!(
-        server.server_card().unwrap().remote.as_ref().unwrap().url,
+        server.server_card().unwrap().primary_remote().unwrap().url,
         MCP_DOCS_ENDPOINT
     );
     assert!(!server.requires_secret());
@@ -154,27 +154,58 @@ fn fixture_resolver_returns_mcp_server_and_skills() {
     );
 }
 
+/// Verbatim shape of `https://github.com/.well-known/ai-catalog.json` (fetched 2026-10-20).
+const GITHUB_CATALOG: &str = r#"{"specVersion":"1.0","entries":[{"identifier":"urn:air:github.com:mcp:github-mcp-server","type":"application/mcp-server-card+json","url":"__CARD_URL__"}]}"#;
+
+/// Verbatim shape of `https://api.githubcopilot.com/mcp/server-card` (fetched 2026-10-20).
+const GITHUB_CARD: &str = r#"{"$schema":"https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json","name":"io.github.github/github-mcp-server","version":"github-mcp-server/remote-c91af86fab613fa50f4f34159186e6a61e89c381","description":"Connect AI assistants to GitHub - manage repos, issues, PRs, and workflows through natural language.","title":"GitHub","websiteUrl":"https://github.com/github/github-mcp-server","repository":{"url":"https://github.com/github/github-mcp-server","source":"github","id":"942771284"},"remotes":[{"type":"streamable-http","url":"https://api.githubcopilot.com/mcp/"}]}"#;
+
+fn header_auth_card() -> ServerCard {
+    serde_json::from_value(serde_json::json!({
+        "name": "dev.example/secured",
+        "remote": {
+            "type": "streamable-http",
+            "url": "https://example.dev/mcp",
+            "auth": { "kind": "header", "header": "X-Api-Key" }
+        }
+    }))
+    .unwrap()
+}
+
 #[test]
-fn github_fixture_requires_secret_and_injects_header() {
-    let found = block_on(FixtureResolver.resolve("github.com"));
-    let server = found.iter().find(|d| d.is_server()).unwrap();
-    assert!(server.requires_secret());
+fn header_auth_card_requires_secret_and_injects_header() {
+    let card = header_auth_card();
+    let expected_error = Err(InstallError::SecretRequired {
+        header: "X-Api-Key".to_string(),
+    });
+    assert_eq!(install_plan_for_card(&card, None), expected_error);
+    assert_eq!(install_plan_for_card(&card, Some("  ")), expected_error);
+    let plan = install_plan_for_card(&card, Some("k3y")).unwrap();
+    assert_eq!(plan.server_name, "secured");
     assert_eq!(
-        install_plan_for(server, None),
-        Err(InstallError::SecretRequired {
-            header: "Authorization".to_string()
-        })
+        plan.headers.get("X-Api-Key").map(String::as_str),
+        Some("k3y")
     );
-    assert_eq!(
-        install_plan_for(server, Some("  ")),
-        Err(InstallError::SecretRequired {
-            header: "Authorization".to_string()
-        })
-    );
-    let plan = install_plan_for(server, Some("ghp_demo")).unwrap();
-    assert_eq!(plan.url, GITHUB_ENDPOINT);
+}
+
+#[test]
+fn oauth_card_installs_without_secret() {
+    let mut card = header_auth_card();
+    card.remote.as_mut().unwrap().auth.as_mut().unwrap().kind = "oauth".to_string();
+    let plan = install_plan_for_card(&card, None).unwrap();
+    assert!(plan.uses_oauth);
+    assert!(plan.headers.is_empty());
+}
+
+#[test]
+fn parses_github_card_and_sends_token_as_bearer() {
+    let card: ServerCard = serde_json::from_str(GITHUB_CARD).unwrap();
+    assert_eq!(card.title.as_deref(), Some("GitHub"));
+    let plan = install_plan_for_card(&card, None).unwrap();
+    assert_eq!(plan.url, "https://api.githubcopilot.com/mcp/");
     assert_eq!(plan.server_name, "github-mcp-server");
-    assert_eq!(plan.transport, RemoteTransportKind::StreamableHttp);
+    assert!(plan.headers.is_empty());
+    let plan = install_plan_for_card(&card, Some("ghp_demo")).unwrap();
     assert_eq!(
         plan.headers.get("Authorization").map(String::as_str),
         Some("Bearer ghp_demo")
@@ -182,12 +213,34 @@ fn github_fixture_requires_secret_and_injects_header() {
 }
 
 #[test]
-fn oauth_card_installs_without_secret() {
-    let mut card = fixtures::github_card();
-    card.remote.as_mut().unwrap().auth.as_mut().unwrap().kind = "oauth".to_string();
-    let plan = install_plan_for_card(&card, None).unwrap();
-    assert!(plan.uses_oauth);
-    assert!(plan.headers.is_empty());
+fn http_resolver_follows_typed_catalog_entries() {
+    let card_origin = serve_fixture_catalog(vec![("/mcp/server-card", GITHUB_CARD.to_string())]);
+    let catalog = GITHUB_CATALOG.replace("__CARD_URL__", &format!("{card_origin}/mcp/server-card"));
+    let origin = serve_fixture_catalog(vec![("/.well-known/ai-catalog.json", catalog)]);
+    let resolver = HttpResolver::new(http_client::Client::new_external())
+        .with_origin_override("github.com", &origin);
+    let found = block_on(resolver.resolve("github.com"));
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, "github.com#io.github.github/github-mcp-server");
+    assert_eq!(found[0].title(), "GitHub");
+    assert!(!found[0].fixture);
+}
+
+/// Hits the real `https://github.com/.well-known/ai-catalog.json`. Opt in with `AI_CATALOG_LIVE=1`.
+#[test]
+fn live_github_catalog_resolves_github_mcp_server() {
+    if std::env::var_os("AI_CATALOG_LIVE").is_none() {
+        eprintln!("skipping live test; set AI_CATALOG_LIVE=1 to run it");
+        return;
+    }
+    let found = block_on(DefaultResolver::new(Some(HttpResolver::default())).resolve("github.com"));
+    let server = found
+        .iter()
+        .find(|d| d.id == "github.com#io.github.github/github-mcp-server")
+        .expect("github.com should advertise the GitHub MCP server");
+    assert!(!server.fixture);
+    let plan = install_plan_for(server, None).unwrap();
+    assert_eq!(plan.url, "https://api.githubcopilot.com/mcp/");
 }
 
 #[test]
@@ -303,8 +356,8 @@ fn http_resolver_fetches_catalog_and_referenced_server_card() {
     let found = block_on(resolver.resolve("example.dev"));
     assert_eq!(found.len(), 3);
     assert!(found.iter().all(|discovery| !discovery.fixture));
-    assert_eq!(found[0].title(), "Example Docs");
-    let plan = install_plan_for(&found[1], None).unwrap();
+    assert_eq!(found[1].title(), "Example Docs");
+    let plan = install_plan_for(&found[0], None).unwrap();
     assert_eq!(plan.transport, RemoteTransportKind::Sse);
     assert!(plan.uses_oauth);
     assert!(matches!(found[2].kind, DiscoveryKind::Skills(_)));

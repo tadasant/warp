@@ -103,22 +103,35 @@ impl CatalogResolver for HttpResolver {
         let Some(catalog) = self.fetch_json::<AiCatalog>(&catalog_url).await else {
             return vec![];
         };
-        let mut discoveries = Vec::new();
+        let mut cards = Vec::new();
+        let mut card_urls = Vec::new();
         for server in catalog.servers {
-            let card = match (server.card, server.server_card) {
-                (Some(card), _) => Some(card),
-                (None, Some(card_url)) => {
-                    match Url::parse(&catalog_url).and_then(|base| base.join(&card_url)) {
-                        Ok(card_url) => self.fetch_json::<ServerCard>(card_url.as_str()).await,
-                        Err(_) => None,
-                    }
-                }
-                (None, None) => None,
-            };
-            if let Some(card) = card {
-                discoveries.push(Discovery::new_server(domain, card, false));
+            match (server.card, server.server_card) {
+                (Some(card), _) => cards.push(card),
+                (None, Some(card_url)) => card_urls.push(card_url),
+                (None, None) => {}
             }
         }
+        card_urls.extend(
+            catalog
+                .entries
+                .into_iter()
+                .filter(|entry| entry.is_server_card())
+                .filter_map(|entry| entry.url),
+        );
+        for card_url in card_urls {
+            let Ok(card_url) = Url::parse(&catalog_url).and_then(|base| base.join(&card_url))
+            else {
+                continue;
+            };
+            if let Some(card) = self.fetch_json::<ServerCard>(card_url.as_str()).await {
+                cards.push(card);
+            }
+        }
+        let mut discoveries: Vec<_> = cards
+            .into_iter()
+            .map(|card| Discovery::new_server(domain, card, false))
+            .collect();
         discoveries.extend(
             catalog
                 .skills
@@ -129,7 +142,8 @@ impl CatalogResolver for HttpResolver {
     }
 }
 
-/// Fixtures win so demos are deterministic; otherwise falls back to a live HTTP probe.
+/// Probes the live catalog first, then falls back to the built-in demo fixtures for domains that
+/// do not publish one yet.
 pub struct DefaultResolver {
     http: Option<HttpResolver>,
 }
@@ -143,13 +157,12 @@ impl DefaultResolver {
 #[async_trait]
 impl CatalogResolver for DefaultResolver {
     async fn resolve(&self, domain: &str) -> Vec<Discovery> {
-        let fixtures = FixtureResolver.resolve(domain).await;
-        if !fixtures.is_empty() {
-            return fixtures;
+        if let Some(http) = &self.http {
+            let live = http.resolve(domain).await;
+            if !live.is_empty() {
+                return live;
+            }
         }
-        match &self.http {
-            Some(http) => http.resolve(domain).await,
-            None => vec![],
-        }
+        FixtureResolver.resolve(domain).await
     }
 }

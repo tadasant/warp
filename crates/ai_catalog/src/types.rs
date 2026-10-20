@@ -18,6 +18,28 @@ pub struct AiCatalog {
     pub servers: Vec<CatalogServerRef>,
     #[serde(default)]
     pub skills: Vec<SkillsBundle>,
+    /// Typed entries, as served by e.g. `https://github.com/.well-known/ai-catalog.json`.
+    #[serde(default)]
+    pub entries: Vec<CatalogEntry>,
+}
+
+pub const SERVER_CARD_MEDIA_TYPE: &str = "application/mcp-server-card+json";
+
+/// A typed catalog entry. Only entries whose `type` is [`SERVER_CARD_MEDIA_TYPE`] are resolved.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    #[serde(default)]
+    pub identifier: Option<String>,
+    #[serde(default, rename = "type")]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+impl CatalogEntry {
+    pub fn is_server_card(&self) -> bool {
+        self.media_type.as_deref() == Some(SERVER_CARD_MEDIA_TYPE)
+    }
 }
 
 /// A catalog entry pointing at a Server Card, either inline or by URL.
@@ -45,14 +67,24 @@ pub struct ServerCard {
     pub title: Option<String>,
     #[serde(default)]
     pub icons: Option<Icons>,
+    /// A URL string or a `{ "url": ... }` object.
     #[serde(default)]
-    pub repository: Option<String>,
-    #[serde(default)]
+    pub repository: Option<serde_json::Value>,
+    #[serde(default, alias = "websiteUrl")]
     pub website: Option<String>,
     #[serde(default)]
     pub remote: Option<RemoteTransport>,
+    #[serde(default)]
+    pub remotes: Vec<RemoteTransport>,
     #[serde(default, rename = "_meta")]
     pub meta: serde_json::Value,
+}
+
+impl ServerCard {
+    /// The single `remote` block, or the first of `remotes`.
+    pub fn primary_remote(&self) -> Option<&RemoteTransport> {
+        self.remote.as_ref().or_else(|| self.remotes.first())
+    }
 }
 
 /// Values may be `http(s)` URLs or `data:` URIs.
@@ -193,7 +225,7 @@ impl Discovery {
 
     pub fn auth(&self) -> Option<&AuthRequirement> {
         self.server_card()
-            .and_then(|card| card.remote.as_ref())
+            .and_then(ServerCard::primary_remote)
             .and_then(|remote| remote.auth.as_ref())
     }
 

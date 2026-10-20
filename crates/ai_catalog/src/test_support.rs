@@ -21,6 +21,16 @@ impl FixtureCatalogServer {
     /// Binds `127.0.0.1:<port>` (0 for ephemeral) and serves on a background thread. When
     /// `required_bearer` is set, the MCP endpoint answers 401 unless that bearer token is sent.
     pub fn start(port: u16, required_bearer: Option<String>) -> std::io::Result<Self> {
+        Self::start_with_card_auth(port, required_bearer, true)
+    }
+
+    /// Like [`Self::start`], but `declare_auth = false` leaves the auth requirement out of the
+    /// Server Card even though the endpoint still demands a bearer token, as GitHub's card does.
+    pub fn start_with_card_auth(
+        port: u16,
+        required_bearer: Option<String>,
+        declare_auth: bool,
+    ) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", port))?;
         let origin = format!("http://{}", listener.local_addr()?);
         let tool_calls = Arc::new(AtomicUsize::new(0));
@@ -28,6 +38,7 @@ impl FixtureCatalogServer {
         let state = ServerState {
             origin: origin.clone(),
             required_bearer,
+            declare_auth,
             tool_calls: tool_calls.clone(),
             authorization_headers: authorization_headers.clone(),
         };
@@ -68,6 +79,7 @@ impl FixtureCatalogServer {
 struct ServerState {
     origin: String,
     required_bearer: Option<String>,
+    declare_auth: bool,
     tool_calls: Arc<AtomicUsize>,
     authorization_headers: Arc<Mutex<Vec<String>>>,
 }
@@ -164,7 +176,7 @@ impl ServerState {
             "type": "streamable-http",
             "url": format!("{}/mcp", self.origin),
         });
-        if self.required_bearer.is_some() {
+        if self.required_bearer.is_some() && self.declare_auth {
             remote["auth"] = json!({
                 "kind": "header",
                 "header": "Authorization",

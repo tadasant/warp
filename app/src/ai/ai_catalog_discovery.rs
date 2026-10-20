@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use ai_catalog::{
-    CatalogResolver, DefaultResolver, Discovery, DiscoveryKind, DiscoveryMode, DiscoveryState,
-    DomainObservation, HttpResolver, InstallError, InstallPlan, domains_to_probe, install_plan_for,
+    CatalogResolver, DefaultResolver, Discovery, DiscoveryMode, DiscoveryState, DomainObservation,
+    HttpResolver, InstallError, InstallPlan, domains_to_probe, install_plan_for,
 };
 use itertools::Itertools as _;
 use uuid::Uuid;
@@ -28,8 +28,8 @@ use crate::ai::mcp::{
     TemplatableMCPServerManager,
 };
 use crate::settings::{AISettings, AiCatalogDiscoveryMode};
-use crate::view_components::{DismissibleToast, ToastLink};
-use crate::workspace::{ToastStack, WorkspaceAction};
+use crate::view_components::DismissibleToast;
+use crate::workspace::ToastStack;
 
 /// Comma-separated `domain=origin` pairs that make the resolver probe a local origin (e.g. a
 /// fixture server) in place of `https://<domain>`.
@@ -59,6 +59,8 @@ impl std::fmt::Display for DiscoveryInstallError {
 #[derive(Debug, Clone)]
 pub enum AiCatalogDiscoveryEvent {
     Discovered(Discovery),
+    /// The pending list or a pending discovery's auth needs changed.
+    PendingChanged,
     InstallStarted {
         discovery_id: String,
         installation_uuid: Uuid,
@@ -77,6 +79,7 @@ pub enum AiCatalogDiscoveryEvent {
 struct InFlightInstall {
     discovery: Discovery,
     server_name: String,
+    used_secret: bool,
 }
 
 pub struct AiCatalogDiscoveryModel {
@@ -85,6 +88,9 @@ pub struct AiCatalogDiscoveryModel {
     /// Keys of agent output messages already scanned for domains.
     observed_messages: HashSet<String>,
     installs: HashMap<Uuid, InFlightInstall>,
+    /// Discoveries whose card declares no auth but whose server rejected an auth-less connect, so
+    /// the next attempt collects a bearer token.
+    token_fallback: HashSet<String>,
 }
 
 impl AiCatalogDiscoveryModel {
@@ -115,6 +121,7 @@ impl AiCatalogDiscoveryModel {
             state: DiscoveryState::default(),
             observed_messages: HashSet::new(),
             installs: HashMap::new(),
+            token_fallback: HashSet::new(),
         }
     }
 
@@ -124,6 +131,15 @@ impl AiCatalogDiscoveryModel {
 
     pub fn discovery(&self, discovery_id: &str) -> Option<&Discovery> {
         self.state.get(discovery_id)
+    }
+
+    /// Whether installing `discovery_id` should first collect a secret from the user.
+    pub fn needs_secret(&self, discovery_id: &str) -> bool {
+        self.token_fallback.contains(discovery_id)
+            || self
+                .state
+                .get(discovery_id)
+                .is_some_and(Discovery::requires_secret)
     }
 
     /// Probes the domains `observation` references, per the current discovery mode. Never blocks:
@@ -152,15 +168,19 @@ impl AiCatalogDiscoveryModel {
         discoveries: Vec<Discovery>,
         ctx: &mut ModelContext<Self>,
     ) {
-        for discovery in self.state.finish_probe(domain, discoveries) {
+        let fresh = self.state.finish_probe(domain, discoveries);
+        if fresh.is_empty() {
+            return;
+        }
+        for discovery in fresh {
             log::info!(
                 "AI catalog discovery on {domain}: {} (fixture: {})",
                 discovery.id,
                 discovery.fixture
             );
-            show_toast(nudge_toast(&discovery), true, ctx);
             ctx.emit(AiCatalogDiscoveryEvent::Discovered(discovery));
         }
+        ctx.emit(AiCatalogDiscoveryEvent::PendingChanged);
     }
 
     /// Installs a discovered MCP server into the running app session. `secret` is required when
@@ -186,6 +206,7 @@ impl AiCatalogDiscoveryModel {
             InFlightInstall {
                 discovery: discovery.clone(),
                 server_name: plan.server_name.clone(),
+                used_secret: secret.is_some_and(|secret| !secret.trim().is_empty()),
             },
         );
         TemplatableMCPServerManager::handle(ctx).update(ctx, |manager, ctx| {
@@ -204,11 +225,13 @@ impl AiCatalogDiscoveryModel {
             discovery_id: discovery.id,
             installation_uuid,
         });
+        ctx.emit(AiCatalogDiscoveryEvent::PendingChanged);
         Ok(installation_uuid)
     }
 
-    pub fn dismiss(&mut self, discovery_id: &str) {
+    pub fn dismiss(&mut self, discovery_id: &str, ctx: &mut ModelContext<Self>) {
         self.state.mark_dismissed(discovery_id);
+        ctx.emit(AiCatalogDiscoveryEvent::PendingChanged);
     }
 
     fn handle_server_state_changed(
@@ -246,16 +269,26 @@ impl AiCatalogDiscoveryModel {
                     .get_server_error_message(installation_uuid)
                     .unwrap_or("the server failed to start")
                     .to_string();
+                let offer_token = install.discovery.auth().is_none() && !install.used_secret;
+                let hint = if offer_token {
+                    " Choose Connect… above the input to retry with a token."
+                } else {
+                    ""
+                };
                 show_toast(
                     DismissibleToast::error(format!(
-                        "Couldn't install {}: {message}",
+                        "Couldn't install {}: {message}.{hint}",
                         install.discovery.title()
                     )),
                     false,
                     ctx,
                 );
                 let discovery_id = install.discovery.id.clone();
+                if offer_token {
+                    self.token_fallback.insert(discovery_id.clone());
+                }
                 self.state.requeue(install.discovery);
+                ctx.emit(AiCatalogDiscoveryEvent::PendingChanged);
                 ctx.emit(AiCatalogDiscoveryEvent::InstallFailed {
                     discovery_id,
                     message,
@@ -442,46 +475,6 @@ fn installation_for_plan(
                 "server config is missing variable values".to_string(),
             )
         })
-}
-
-fn nudge_toast(discovery: &Discovery) -> DismissibleToast<WorkspaceAction> {
-    let fixture_label = if discovery.fixture {
-        " (demo fixture)"
-    } else {
-        ""
-    };
-    match &discovery.kind {
-        DiscoveryKind::Server(_) => {
-            let auth_label = match discovery.auth() {
-                Some(auth) if auth.is_oauth() => " · OAuth",
-                Some(_) => " · auth required",
-                None => "",
-            };
-            let link_text = if discovery.requires_secret() {
-                "Connect…"
-            } else {
-                "Install"
-            };
-            DismissibleToast::default(format!(
-                "MCP server discovered on {}{fixture_label}: {}{auth_label}",
-                discovery.source_domain,
-                discovery.title()
-            ))
-            .with_object_id(discovery.id.clone())
-            .with_link(ToastLink::new(link_text.to_string()).with_onclick_action(
-                WorkspaceAction::InstallDiscoveredMcpServer {
-                    discovery_id: discovery.id.clone(),
-                },
-            ))
-        }
-        DiscoveryKind::Skills(bundle) => DismissibleToast::default(format!(
-            "Skills bundle discovered on {}{fixture_label}: {} ({})",
-            discovery.source_domain,
-            bundle.name,
-            bundle.skills.iter().map(|skill| &skill.name).join(", ")
-        ))
-        .with_object_id(discovery.id.clone()),
-    }
 }
 
 /// Shows `toast` in the active window. A no-op when no window or toast stack exists (e.g. headless).

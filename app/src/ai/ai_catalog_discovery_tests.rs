@@ -366,3 +366,66 @@ fn header_auth_server_requires_and_sends_secret() {
         assert!(request_tool_names(&app).contains(&FIXTURE_TOOL_NAME.to_string()));
     });
 }
+
+/// Cards that omit their auth requirements (GitHub's does) install without a secret first; when
+/// the server rejects that, discovery asks for a token and sends it as a bearer token.
+#[test]
+fn undeclared_auth_falls_back_to_bearer_token() {
+    let _grouped = FeatureFlag::MCPGroupedServerContext.override_enabled(true);
+    App::test((), |mut app| async move {
+        let server =
+            FixtureCatalogServer::start_with_card_auth(0, Some("ghp_demo".to_string()), false)
+                .unwrap();
+        setup(
+            &mut app,
+            AiCatalogDiscoveryMode::LightTouch,
+            fixture_resolver(&server),
+        );
+        let events = record_events(&mut app);
+        stream_agent_messages(
+            &mut app,
+            vec![web_fetch_message(
+                "fetch-1",
+                &[&format!("https://{FIXTURE_DOMAIN}/org/repo")],
+            )],
+        );
+        wait_until("discovery", || pending_ids(&app).len() == 2).await;
+        let server_id = format!("{FIXTURE_DOMAIN}#dev.warp.fixture/docs");
+        let needs_secret = |app: &App| {
+            AiCatalogDiscoveryModel::handle(app)
+                .read(app, |model, _| model.needs_secret(&server_id))
+        };
+        assert!(!needs_secret(&app));
+
+        AiCatalogDiscoveryModel::handle(&app)
+            .update(&mut app, |model, ctx| model.install(&server_id, None, ctx))
+            .expect("auth-less card installs without a secret");
+        wait_until("rejected install", || {
+            events
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, AiCatalogDiscoveryEvent::InstallFailed { .. }))
+        })
+        .await;
+        assert!(needs_secret(&app));
+
+        AiCatalogDiscoveryModel::handle(&app)
+            .update(&mut app, |model, ctx| {
+                model.install(&server_id, Some("ghp_demo"), ctx)
+            })
+            .expect("install starts");
+        wait_until("authenticated install", || {
+            events
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, AiCatalogDiscoveryEvent::Installed { .. }))
+        })
+        .await;
+        assert!(
+            server
+                .authorization_headers()
+                .contains(&"Bearer ghp_demo".to_string())
+        );
+        assert!(request_tool_names(&app).contains(&FIXTURE_TOOL_NAME.to_string()));
+    });
+}

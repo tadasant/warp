@@ -1,10 +1,10 @@
 //! AI Catalog / Server Card discovery (SEP-2127): nudge, install, auth entry and settings.
 //!
-//! Agent web fetches normally stream from warp-server, so this test feeds discovery a synthetic
-//! web-fetch observation instead. Catalog resolution, the toast nudge, the secret-entry modal, the
-//! MCP server spawn and the request tool list are all real. It needs network access to the live
-//! `https://modelcontextprotocol.io/mcp` endpoint and is meant to run manually with a real display
-//! to capture screenshots:
+//! Agent web fetches normally stream from warp-server, so this test feeds discovery synthetic
+//! web-fetch observations instead. Catalog resolution (live for github.com), the nudge above the
+//! input, the secret-entry modal, the MCP server spawn and the request tool list are all real. It
+//! needs network access to github.com and the live `https://modelcontextprotocol.io/mcp`
+//! endpoint, and is meant to run manually with a real display to capture screenshots:
 //!
 //! ```sh
 //! WARPUI_USE_REAL_DISPLAY_IN_INTEGRATION_TESTS=1 \
@@ -51,11 +51,15 @@ pub fn test_ai_catalog_discovery() -> Builder {
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
         .with_step(set_ai_catalog_discovery_mode_full())
         .with_step(observe_agent_web_fetch(
+            "https://github.com/tadasant/warp/pulls",
+            1,
+        ))
+        .with_step(observe_agent_web_fetch(
             "https://modelcontextprotocol.io/specification/2025-06-18",
-            2,
+            3,
         ))
         .with_step(pause(
-            "Nudges for the MCP docs server and its Skills",
+            "Live GitHub card plus MCP docs fixture above the input",
             "01-nudges.png",
         ))
         .with_step(install_discovered_server(
@@ -68,7 +72,7 @@ pub fn test_ai_catalog_discovery() -> Builder {
         .with_step(pause("Live docs server is active", "02-installed.png"))
         .with_step(observe_agent_web_fetch(
             "https://docs.fixture-catalog.dev/guide",
-            3,
+            4,
         ))
         .with_step(pause(
             "Nudge for the auth-required server",

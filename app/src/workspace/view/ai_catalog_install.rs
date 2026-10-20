@@ -63,17 +63,16 @@ impl Workspace {
         discovery_id: &str,
         ctx: &mut ViewContext<Self>,
     ) {
-        let Some(discovery) = AiCatalogDiscoveryModel::as_ref(ctx)
-            .discovery(discovery_id)
-            .cloned()
-        else {
+        let model = AiCatalogDiscoveryModel::as_ref(ctx);
+        let needs_secret = model.needs_secret(discovery_id);
+        let Some(discovery) = model.discovery(discovery_id).cloned() else {
             self.show_ai_catalog_error_toast(
                 "That discovered MCP server is no longer available.".to_string(),
                 ctx,
             );
             return;
         };
-        if discovery.requires_secret() {
+        if needs_secret {
             self.open_ai_catalog_install_modal(&discovery, ctx);
         } else {
             self.install_discovery_with_secret(discovery_id, None, ctx);
@@ -118,9 +117,14 @@ impl Workspace {
             version: 0,
             gallery_data: None,
         };
-        let header = auth
-            .and_then(|auth| auth.header.as_deref())
-            .unwrap_or("Authorization");
+        let header = match auth {
+            Some(auth) => auth
+                .header
+                .as_deref()
+                .unwrap_or("Authorization")
+                .to_string(),
+            None => "Authorization: Bearer".to_string(),
+        };
         let mut instructions = format!(
             "{}\n\nThis server requires authentication. The value is sent as the `{header}` \
              header and kept in memory for this session only.",
