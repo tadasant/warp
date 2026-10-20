@@ -422,13 +422,16 @@ fn installation_for_plan(
     plan: &InstallPlan,
     description: &str,
 ) -> Result<TemplatableMCPServerInstallation, DiscoveryInstallError> {
-    let config = serde_json::json!({
-        plan.server_name.clone(): {
+    let mut config = serde_json::Map::new();
+    config.insert(
+        plan.server_name.clone(),
+        serde_json::json!({
             "url": plan.url,
             "headers": plan.headers,
             "description": description,
-        }
-    });
+        }),
+    );
+    let config = serde_json::Value::Object(config);
     ParsedTemplatableMCPServerResult::from_user_json(&config.to_string())
         .map_err(|err| DiscoveryInstallError::InvalidServerConfig(err.to_string()))?
         .into_iter()
