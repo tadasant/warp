@@ -93,9 +93,9 @@ jobs:
               continue
             fi
             echo "=== $test ===" | tee -a /mnt/integration.log
+            code=0
             xvfb-run -a -s "-screen 0 1600x1000x24" \
-              /mnt/target/debug/integration "$test" > /mnt/$test.log 2>&1
-            code=$?
+              /mnt/target/debug/integration "$test" > /mnt/$test.log 2>&1 || code=$?
             tail -40 /mnt/$test.log | tee -a /mnt/integration.log
             echo "$test exit $code" | tee -a /mnt/integration.log
             [ $code -eq 0 ] || status=1
