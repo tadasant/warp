@@ -46,7 +46,7 @@ jobs:
         run: |
           sudo apt-get update -y
           ./script/linux/install_runtime_deps
-          sudo apt-get install -y xvfb zsh fish
+          sudo apt-get install -y xvfb zsh fish ffmpeg fonts-dejavu-core
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -79,7 +79,7 @@ jobs:
           cargo nextest run -p warp --lib --no-fail-fast \
             -E 'test(/ai_catalog|ai::mcp::|installation_modal|settings_view::warp_agent_page/)' 2>&1 | tee /mnt/app-tests.log
 
-      - name: Screenshot integration test under Xvfb + lavapipe
+      - name: Screenshot and video integration tests under Xvfb + lavapipe
         if: ${{ !cancelled() }}
         env:
           WARPUI_USE_REAL_DISPLAY_IN_INTEGRATION_TESTS: 1
@@ -94,9 +94,33 @@ jobs:
               continue
             fi
             echo "=== $test ===" | tee -a /mnt/integration.log
+            case "$test" in
+              test_ai_catalog_discovery)
+                printf '%s\n%s' \
+                  "DEMO: agent turns are synthetic events (no Warp login); UI actions are driven by the test harness." \
+                  "LIVE: github.com AI Catalog + Server Card, modelcontextprotocol.io MCP server. Auth-required server is a local fixture." \
+                  > /mnt/caption-$test.txt ;;
+              test_ai_catalog_background_discovery)
+                printf '%s\n%s' \
+                  "DEMO: the prompt is a synthetic event (no Warp login); the reasoner is a local stub with a scripted reply." \
+                  "LIVE: the github.com AI Catalog + Server Card probe. UI actions are driven by the test harness." \
+                  > /mnt/caption-$test.txt ;;
+            esac
+            Xvfb :99 -screen 0 1280x800x24 > /mnt/$test-xvfb.log 2>&1 &
+            xvfb_pid=$!
+            sleep 2
+            ffmpeg -y -loglevel warning -f x11grab -video_size 1280x800 -framerate 15 -i :99 \
+              -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=/mnt/caption-$test.txt:fontsize=15:fontcolor=white:line_spacing=4:box=1:boxcolor=black@0.75:boxborderw=8:x=12:y=h-th-14" \
+              -c:v libx264 -preset veryfast -pix_fmt yuv420p -movflags +faststart \
+              /mnt/artifacts/$test.mp4 > /mnt/$test-ffmpeg.log 2>&1 &
+            ffmpeg_pid=$!
             code=0
-            xvfb-run -a -s "-screen 0 1600x1000x24" \
-              /mnt/target/debug/integration "$test" > /mnt/$test.log 2>&1 || code=$?
+            DISPLAY=:99 /mnt/target/debug/integration "$test" > /mnt/$test.log 2>&1 || code=$?
+            sleep 2
+            kill -INT $ffmpeg_pid || true
+            wait $ffmpeg_pid || true
+            kill $xvfb_pid || true
+            ls -la /mnt/artifacts/$test.mp4 || true
             tail -40 /mnt/$test.log | tee -a /mnt/integration.log
             echo "$test exit $code" | tee -a /mnt/integration.log
             [ $code -eq 0 ] || status=1
@@ -113,4 +137,5 @@ jobs:
             /mnt/app-tests.log
             /mnt/integration.log
             /mnt/test_ai_catalog_*.log
+            /mnt/caption-*.txt
           if-no-files-found: ignore
