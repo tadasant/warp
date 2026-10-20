@@ -37,7 +37,8 @@ jobs:
       - name: Free disk space and prepare /mnt target dir
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo mkdir -p /mnt/target && sudo chown -R "$USER" /mnt/target
+          sudo mkdir -p /mnt/target /mnt/artifacts
+          sudo chown "$USER" /mnt /mnt/artifacts && sudo chown -R "$USER" /mnt/target
           df -h / /mnt
           free -g
 
