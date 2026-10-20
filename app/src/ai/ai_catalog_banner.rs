@@ -91,6 +91,9 @@ impl AiCatalogBanner {
             ),
         };
         let mut qualifiers = vec![format!("on {}", discovery.source_domain)];
+        if let Some(host) = discovery.remote_host() {
+            qualifiers.push(format!("connects to {host}"));
+        }
         if discovery.fixture {
             qualifiers.push("demo fixture".to_string());
         }
@@ -208,16 +211,15 @@ impl AiCatalogBanner {
                 )
                 .finish(),
             );
-        if status.kind != InstallStatusKind::InProgress {
-            row.add_child(link(
-                "Dismiss",
-                internal_colors::neutral_5(theme),
-                font_family,
-                font_size,
-                self.status_dismiss_mouse_state.clone(),
-                |ctx| ctx.dispatch_typed_action(AiCatalogBannerAction::DismissStatus),
-            ));
-        }
+        // Always dismissable: an abandoned OAuth flow can leave an install in progress forever.
+        row.add_child(link(
+            "Dismiss",
+            internal_colors::neutral_5(theme),
+            font_family,
+            font_size,
+            self.status_dismiss_mouse_state.clone(),
+            |ctx| ctx.dispatch_typed_action(AiCatalogBannerAction::DismissStatus),
+        ));
         Some(row.finish())
     }
 }

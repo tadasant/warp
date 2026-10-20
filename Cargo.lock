@@ -393,11 +393,13 @@ dependencies = [
 name = "ai_catalog"
 version = "0.1.0"
 dependencies = [
+ "async-compat",
  "async-trait",
  "futures",
  "http_client",
  "log",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "url",

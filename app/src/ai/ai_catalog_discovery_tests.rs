@@ -41,10 +41,7 @@ fn setup(app: &mut App, mode: AiCatalogDiscoveryMode, resolver: Arc<dyn CatalogR
 }
 
 fn fixture_resolver(server: &FixtureCatalogServer) -> Arc<dyn CatalogResolver> {
-    Arc::new(
-        HttpResolver::new(http_client::Client::new_external())
-            .with_origin_override(FIXTURE_DOMAIN, server.origin()),
-    )
+    Arc::new(HttpResolver::default().with_origin_override(FIXTURE_DOMAIN, server.origin()))
 }
 
 fn install_status(app: &App) -> Option<InstallStatus> {

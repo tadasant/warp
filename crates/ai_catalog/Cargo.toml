@@ -9,10 +9,12 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+async-compat.workspace = true
 async-trait.workspace = true
 http_client.workspace = true
 log.workspace = true
 regex.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true

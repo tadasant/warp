@@ -223,6 +223,14 @@ impl Discovery {
         self.server_card().is_some()
     }
 
+    /// Host the server's remote endpoint lives on, shown wherever the user decides to trust it.
+    pub fn remote_host(&self) -> Option<String> {
+        self.server_card()
+            .and_then(ServerCard::primary_remote)
+            .and_then(|remote| url::Url::parse(&remote.url).ok())
+            .and_then(|url| url.host_str().map(str::to_string))
+    }
+
     pub fn auth(&self) -> Option<&AuthRequirement> {
         self.server_card()
             .and_then(ServerCard::primary_remote)

@@ -26,7 +26,7 @@ use crate::ai::mcp::{
     MCPServerState, ParsedTemplatableMCPServerResult, TemplatableMCPServerInstallation,
     TemplatableMCPServerManager,
 };
-use crate::settings::{AISettings, AiCatalogDiscoveryMode};
+use crate::settings::{AISettings, AISettingsChangedEvent, AiCatalogDiscoveryMode};
 
 /// Comma-separated `domain=origin` pairs that make the resolver probe a local origin (e.g. a
 /// fixture server) in place of `https://<domain>`.
@@ -106,6 +106,14 @@ impl AiCatalogDiscoveryModel {
                 me.handle_history_event(event, ctx);
             },
         );
+        ctx.subscribe_to_model(&AISettings::handle(ctx), |me, _, event, ctx| {
+            if let AISettingsChangedEvent::AiCatalogDiscoveryMode { .. } = event
+                && current_mode(ctx) == DiscoveryMode::Off
+            {
+                me.state.clear_pending();
+                ctx.emit(AiCatalogDiscoveryEvent::Changed);
+            }
+        });
         ctx.subscribe_to_model(
             &TemplatableMCPServerManager::handle(ctx),
             |me, _, event, ctx| {
@@ -186,12 +194,16 @@ impl AiCatalogDiscoveryModel {
         discoveries: Vec<Discovery>,
         ctx: &mut ModelContext<Self>,
     ) {
+        // Discovery may have been switched off while the probe was in flight.
+        if current_mode(ctx) == DiscoveryMode::Off {
+            return;
+        }
         let fresh = self.state.finish_probe(domain, discoveries);
         if fresh.is_empty() {
             return;
         }
         for discovery in fresh {
-            log::info!(
+            log::debug!(
                 "AI catalog discovery on {domain}: {} (fixture: {})",
                 discovery.id,
                 discovery.fixture
@@ -305,19 +317,20 @@ impl AiCatalogDiscoveryModel {
         event: &BlocklistAIHistoryEvent,
         ctx: &mut ModelContext<Self>,
     ) {
-        let (exchange_id, conversation_id) = match event {
-            BlocklistAIHistoryEvent::AppendedExchange {
-                exchange_id,
-                conversation_id,
-                ..
-            }
-            | BlocklistAIHistoryEvent::UpdatedStreamingExchange {
-                exchange_id,
-                conversation_id,
-                ..
-            } => (*exchange_id, *conversation_id),
-            _ => return,
+        let (BlocklistAIHistoryEvent::AppendedExchange {
+            exchange_id,
+            conversation_id,
+            ..
+        }
+        | BlocklistAIHistoryEvent::UpdatedStreamingExchange {
+            exchange_id,
+            conversation_id,
+            ..
+        }) = event
+        else {
+            return;
         };
+        let (exchange_id, conversation_id) = (*exchange_id, *conversation_id);
         if current_mode(ctx) == DiscoveryMode::Off {
             return;
         }

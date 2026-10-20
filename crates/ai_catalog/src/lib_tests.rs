@@ -217,8 +217,7 @@ fn http_resolver_follows_typed_catalog_entries() {
     let card_origin = serve_fixture_catalog(vec![("/mcp/server-card", GITHUB_CARD.to_string())]);
     let catalog = GITHUB_CATALOG.replace("__CARD_URL__", &format!("{card_origin}/mcp/server-card"));
     let origin = serve_fixture_catalog(vec![("/.well-known/ai-catalog.json", catalog)]);
-    let resolver = HttpResolver::new(http_client::Client::new_external())
-        .with_origin_override("github.com", &origin);
+    let resolver = HttpResolver::default().with_origin_override("github.com", &origin);
     let found = block_on(resolver.resolve("github.com"));
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].id, "github.com#io.github.github/github-mcp-server");
@@ -350,8 +349,7 @@ fn http_resolver_fetches_catalog_and_referenced_server_card() {
         ("/.well-known/ai-catalog.json", catalog.to_string()),
         ("/mcp/server-card", card.to_string()),
     ]);
-    let resolver = HttpResolver::new(http_client::Client::new_external())
-        .with_origin_override("example.dev", &origin);
+    let resolver = HttpResolver::default().with_origin_override("example.dev", &origin);
 
     let found = block_on(resolver.resolve("example.dev"));
     assert_eq!(found.len(), 3);
@@ -366,7 +364,7 @@ fn http_resolver_fetches_catalog_and_referenced_server_card() {
 #[test]
 fn http_resolver_returns_nothing_without_catalog() {
     let origin = serve_fixture_catalog(vec![]);
-    let resolver = HttpResolver::new(http_client::Client::new_external())
+    let resolver = HttpResolver::default()
         .with_origin_overrides_from_str(&format!("nothing.dev={origin}, malformed"));
     assert!(block_on(resolver.resolve("nothing.dev")).is_empty());
 }
@@ -384,8 +382,7 @@ fn default_resolver_prefers_fixtures_and_skips_http_when_disabled() {
 #[test]
 fn fixture_catalog_server_resolves_over_http() {
     let server = test_support::FixtureCatalogServer::start(0, Some("s3cret".to_string())).unwrap();
-    let resolver = HttpResolver::new(http_client::Client::new_external())
-        .with_origin_override("fixture.example", server.origin());
+    let resolver = HttpResolver::default().with_origin_override("fixture.example", server.origin());
     let found = block_on(resolver.resolve("fixture.example"));
     assert_eq!(found.len(), 2);
     let server_discovery = found.iter().find(|d| d.is_server()).unwrap();
@@ -396,4 +393,77 @@ fn fixture_catalog_server_resolves_over_http() {
         plan.headers.get("Authorization").map(String::as_str),
         Some("Bearer s3cret")
     );
+}
+
+#[test]
+fn rejects_ports_ip_literals_and_private_suffixes() {
+    for host in [
+        "127.0.0.1:8080",
+        "foo.localhost:3000",
+        "[::ffff:127.0.0.1]",
+        "metadata.google.internal",
+        "nas.lan",
+        "router.home.arpa",
+        "10.0.0.1",
+    ] {
+        assert_eq!(normalize_host(host), None, "{host} should be rejected");
+    }
+    assert_eq!(
+        normalize_host("API.GitHub.com."),
+        Some("api.github.com".to_string())
+    );
+}
+
+#[test]
+fn refuses_to_install_servers_on_non_public_or_plaintext_hosts() {
+    let mut card = fixtures::modelcontextprotocol_card();
+    for url in [
+        "http://modelcontextprotocol.io/mcp",
+        "https://169.254.169.254/mcp",
+        "https://metadata.google.internal/mcp",
+    ] {
+        card.remote.as_mut().unwrap().url = url.to_string();
+        assert_eq!(
+            install_plan_for_card(&card, None),
+            Err(InstallError::UnsafeRemoteUrl(url.to_string()))
+        );
+    }
+    card.remote.as_mut().unwrap().url = "http://127.0.0.1:9000/mcp".to_string();
+    assert!(install_plan_for_card(&card, None).is_ok());
+}
+
+#[test]
+fn only_public_https_urls_count_as_public() {
+    for url in [
+        "http://127.0.0.1:1/card",
+        "https://169.254.169.254/latest/meta-data",
+    ] {
+        assert!(!crate::domains::is_public_https_url(
+            &url::Url::parse(url).unwrap()
+        ));
+    }
+    assert!(crate::domains::is_public_https_url(
+        &url::Url::parse("https://api.githubcopilot.com/mcp/server-card").unwrap()
+    ));
+}
+
+#[test]
+fn http_resolver_does_not_follow_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                line.clear();
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 302 Found\r\nlocation: http://169.254.169.254/\r\ncontent-length: 0\r\n\r\n",
+            );
+        }
+    });
+    let resolver = HttpResolver::default().with_origin_override("redirect.dev", &origin);
+    assert!(block_on(resolver.resolve("redirect.dev")).is_empty());
 }

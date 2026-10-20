@@ -61,6 +61,12 @@ impl DiscoveryState {
         self.pending.retain(|discovery| discovery.id != id);
     }
 
+    /// Drops every pending discovery without marking it dismissed, e.g. when discovery is
+    /// switched off.
+    pub fn clear_pending(&mut self) {
+        self.pending.clear();
+    }
+
     pub fn mark_dismissed(&mut self, id: &str) {
         self.dismissed.insert(id.to_string());
         self.pending.retain(|discovery| discovery.id != id);

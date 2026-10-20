@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::domains::is_permitted_remote_url;
 use crate::types::{Discovery, DiscoveryKind, ServerCard};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +25,11 @@ pub enum InstallError {
     NotAServer,
     NoRemoteTransport,
     UnsupportedTransport(String),
-    SecretRequired { header: String },
+    /// The remote isn't `https` on a public host (or a loopback server).
+    UnsafeRemoteUrl(String),
+    SecretRequired {
+        header: String,
+    },
 }
 
 impl std::fmt::Display for InstallError {
@@ -34,6 +39,12 @@ impl std::fmt::Display for InstallError {
             InstallError::NoRemoteTransport => write!(f, "server card has no remote transport"),
             InstallError::UnsupportedTransport(kind) => {
                 write!(f, "unsupported transport type: {kind}")
+            }
+            InstallError::UnsafeRemoteUrl(url) => {
+                write!(
+                    f,
+                    "refusing to connect to {url}: not https on a public host"
+                )
             }
             InstallError::SecretRequired { header } => {
                 write!(f, "auth required: provide a value for {header}")
@@ -73,6 +84,9 @@ pub fn install_plan_for_card(
     let remote = card
         .primary_remote()
         .ok_or(InstallError::NoRemoteTransport)?;
+    if !url::Url::parse(&remote.url).is_ok_and(|url| is_permitted_remote_url(&url)) {
+        return Err(InstallError::UnsafeRemoteUrl(remote.url.clone()));
+    }
     let transport = match remote.transport_type.to_ascii_lowercase().as_str() {
         "streamable-http" | "streamable_http" | "http" => RemoteTransportKind::StreamableHttp,
         "sse" => RemoteTransportKind::Sse,

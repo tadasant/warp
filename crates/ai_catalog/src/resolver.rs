@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use async_compat::Compat;
 use async_trait::async_trait;
 use url::Url;
 
+use crate::domains::is_public_https_url;
 use crate::fixtures;
 use crate::types::{AiCatalog, Discovery, ServerCard};
 
@@ -28,25 +30,30 @@ impl CatalogResolver for FixtureResolver {
 }
 
 /// Fetches `https://<domain>/.well-known/ai-catalog.json` and the Server Cards it references.
+///
+/// Catalogs are untrusted input, so redirects are not followed and referenced cards are only
+/// fetched from public `https` hosts.
 pub struct HttpResolver {
-    client: http_client::Client,
+    client: reqwest::Client,
     origin_overrides: HashMap<String, String>,
 }
 
 impl Default for HttpResolver {
     fn default() -> Self {
-        Self::new(http_client::Client::new_external())
-    }
-}
-
-impl HttpResolver {
-    pub fn new(client: http_client::Client) -> Self {
+        let client = reqwest::Client::builder()
+            .user_agent("warp-ai-catalog-discovery/0.1")
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(3))
+            .build()
+            .unwrap_or_default();
         Self {
             client,
             origin_overrides: HashMap::new(),
         }
     }
+}
 
+impl HttpResolver {
     /// Probes `origin` (e.g. `http://127.0.0.1:8765`) instead of `https://<domain>` for `domain`.
     /// Lets local fixture servers stand in for real domains in tests and demos.
     pub fn with_origin_override(mut self, domain: &str, origin: &str) -> Self {
@@ -76,23 +83,27 @@ impl HttpResolver {
     }
 
     async fn fetch_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Option<T> {
-        let response = match self.client.get(url).timeout(REQUEST_TIMEOUT).send().await {
-            Ok(response) => response,
-            Err(err) => {
-                log::debug!("AI catalog probe of {url} failed: {err}");
+        // reqwest needs a Tokio reactor; the app's executors don't provide one.
+        Compat::new(async {
+            let response = match self.client.get(url).timeout(REQUEST_TIMEOUT).send().await {
+                Ok(response) => response,
+                Err(err) => {
+                    log::debug!("AI catalog probe failed: {err}");
+                    return None;
+                }
+            };
+            if !response.status().is_success() {
                 return None;
             }
-        };
-        if !response.status().is_success() {
-            return None;
-        }
-        match response.json::<T>().await {
-            Ok(document) => Some(document),
-            Err(err) => {
-                log::debug!("AI catalog document at {url} did not parse: {err}");
-                None
+            match response.json::<T>().await {
+                Ok(document) => Some(document),
+                Err(err) => {
+                    log::debug!("AI catalog document did not parse: {err}");
+                    None
+                }
             }
-        }
+        })
+        .await
     }
 }
 
@@ -124,6 +135,11 @@ impl CatalogResolver for HttpResolver {
             else {
                 continue;
             };
+            // Local fixture origins stand in for real domains, so only their cards may be local.
+            if !self.origin_overrides.contains_key(domain) && !is_public_https_url(&card_url) {
+                log::debug!("Skipping AI catalog card that isn't on a public https host");
+                continue;
+            }
             if let Some(card) = self.fetch_json::<ServerCard>(card_url.as_str()).await {
                 cards.push(card);
             }

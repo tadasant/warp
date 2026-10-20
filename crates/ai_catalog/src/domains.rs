@@ -118,19 +118,57 @@ pub fn extract_hosts(text: &str) -> Vec<String> {
     hosts
 }
 
-/// Lowercases, strips a trailing dot and a leading `www.`, and rejects non-public hosts (no dot,
-/// localhost, or IP literals) so discovery never probes private infrastructure.
+/// Name suffixes that only resolve inside private networks.
+const PRIVATE_SUFFIXES: &[&str] = &[
+    ".localhost",
+    ".local",
+    ".internal",
+    ".lan",
+    ".corp",
+    ".home",
+    ".home.arpa",
+    ".intranet",
+];
+
+/// Lowercases, strips a trailing dot and a leading `www.`, and rejects anything that isn't a
+/// public DNS name (ports, IP literals, single labels, private suffixes) so discovery never probes
+/// private infrastructure.
 pub fn normalize_host(host: &str) -> Option<String> {
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     let host = host.strip_prefix("www.").unwrap_or(&host);
-    let is_ip_literal = host.chars().all(|c| c.is_ascii_digit() || c == '.');
-    if !host.contains('.')
+    if host.is_empty()
+        || !host.contains('.')
         || host.starts_with('.')
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || is_ip_literal
+        || host.contains(':')
+        || host.contains('[')
+        || PRIVATE_SUFFIXES.iter().any(|suffix| host.ends_with(suffix))
     {
         return None;
     }
-    Some(host.to_string())
+    match url::Host::parse(host) {
+        Ok(url::Host::Domain(_)) => Some(host.to_string()),
+        Ok(url::Host::Ipv4(_) | url::Host::Ipv6(_)) | Err(_) => None,
+    }
+}
+
+/// Whether `url` is `https` to a public DNS name.
+pub fn is_public_https_url(url: &url::Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| normalize_host(host).is_some())
+}
+
+/// Whether a discovered MCP server at `url` may be installed: `https` to a public host, or a
+/// loopback server (local fixtures and demos).
+pub fn is_permitted_remote_url(url: &url::Url) -> bool {
+    if is_public_https_url(url) {
+        return true;
+    }
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }

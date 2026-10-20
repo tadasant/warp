@@ -125,9 +125,13 @@ impl Workspace {
                 .to_string(),
             None => "Authorization: Bearer".to_string(),
         };
+        let destination = discovery
+            .remote_host()
+            .unwrap_or_else(|| "an unknown host".to_string());
         let mut instructions = format!(
             "{}\n\nThis server requires authentication. The value is sent as the `{header}` \
-             header and kept in memory for this session only.",
+             header to **{destination}** and kept in memory for this session only. Only continue \
+             if you trust {destination} with this credential.",
             discovery.description()
         );
         if let Some(auth_instructions) = auth.and_then(|auth| auth.instructions.as_deref()) {
