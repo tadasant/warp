@@ -1,0 +1,99 @@
+# Fork-only validation for the ai-catalog-discovery branch. Not part of the PR.
+#
+# Upstream CI is gated on `repository_owner == 'warpdotdev'` and skips on this fork, and the
+# agent session that wrote the feature runs under a 4 GiB memory cap that cannot type-check the
+# `warp` crate. This runs the build, tests, clippy and the screenshot integration test on a
+# GitHub-hosted runner instead.
+name: AI Catalog discovery validation
+
+on:
+  push:
+    branches: [ai-catalog-ci]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref to validate
+        default: ai-catalog-discovery
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 4
+  CARGO_TARGET_DIR: /mnt/target
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'ai-catalog-discovery' }}
+          lfs: true
+
+      - name: Free disk space and prepare /mnt target dir
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p /mnt/target && sudo chown -R "$USER" /mnt/target
+          df -h / /mnt
+          free -g
+
+      - name: Install build, runtime and display dependencies
+        run: |
+          sudo apt-get update -y
+          ./script/linux/install_runtime_deps
+          sudo apt-get install -y xvfb zsh fish
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ai-catalog
+          workspaces: ". -> /mnt/target"
+          cache-on-failure: true
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: ai_catalog crate tests
+        run: cargo nextest run -p ai_catalog --no-fail-fast
+
+      - name: ai_catalog clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy -p ai_catalog --all-targets --all-features -- -D warnings
+
+      - name: Build the OSS app (warp-oss)
+        if: ${{ !cancelled() }}
+        run: cargo build -p warp --bin warp-oss
+
+      - name: Clippy for warp and integration
+        if: ${{ !cancelled() }}
+        run: cargo clippy -p warp -p integration --all-targets -- -D warnings
+
+      - name: App tests for discovery and MCP
+        if: ${{ !cancelled() }}
+        run: |
+          cargo nextest run -p warp --lib --no-fail-fast \
+            -E 'test(/ai_catalog|ai::mcp::|installation_modal|settings_view::warp_agent_page/)' 2>&1 | tee /mnt/app-tests.log
+
+      - name: Screenshot integration test under Xvfb + lavapipe
+        if: ${{ !cancelled() }}
+        env:
+          WARPUI_USE_REAL_DISPLAY_IN_INTEGRATION_TESTS: 1
+          WARP_INTEGRATION_TEST_ARTIFACTS_DIR: /mnt/artifacts
+          RUST_LOG: info
+        run: |
+          cargo build -p integration --bin integration
+          xvfb-run -a -s "-screen 0 1600x1000x24" \
+            /mnt/target/debug/integration test_ai_catalog_discovery 2>&1 | tee /mnt/integration.log
+
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-catalog-validation
+          path: |
+            /mnt/artifacts
+            /mnt/app-tests.log
+            /mnt/integration.log
+          if-no-files-found: ignore
