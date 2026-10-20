@@ -14,7 +14,9 @@ use warpui::platform::Cursor;
 use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
 
 use crate::Appearance;
-use crate::ai::ai_catalog_discovery::{AiCatalogDiscoveryEvent, AiCatalogDiscoveryModel};
+use crate::ai::ai_catalog_discovery::{
+    AiCatalogDiscoveryEvent, AiCatalogDiscoveryModel, InstallStatusKind,
+};
 use crate::workspace::WorkspaceAction;
 
 /// Rows shown at once; older discoveries wait until newer ones are handled.
@@ -23,6 +25,7 @@ const MAX_VISIBLE_DISCOVERIES: usize = 3;
 #[derive(Clone, Debug)]
 pub enum AiCatalogBannerAction {
     Dismiss(String),
+    DismissStatus,
 }
 
 #[derive(Default)]
@@ -33,6 +36,7 @@ struct RowMouseStates {
 
 pub struct AiCatalogBanner {
     row_mouse_states: HashMap<String, RowMouseStates>,
+    status_dismiss_mouse_state: MouseStateHandle,
 }
 
 impl AiCatalogBanner {
@@ -40,18 +44,15 @@ impl AiCatalogBanner {
         ctx.subscribe_to_model(
             &AiCatalogDiscoveryModel::handle(ctx),
             |me, _, event, ctx| match event {
-                AiCatalogDiscoveryEvent::PendingChanged => {
+                AiCatalogDiscoveryEvent::Changed => {
                     me.sync_mouse_states(ctx);
                     ctx.notify();
                 }
-                AiCatalogDiscoveryEvent::Discovered(_)
-                | AiCatalogDiscoveryEvent::InstallStarted { .. }
-                | AiCatalogDiscoveryEvent::Installed { .. }
-                | AiCatalogDiscoveryEvent::InstallFailed { .. } => {}
             },
         );
         let mut banner = Self {
             row_mouse_states: HashMap::new(),
+            status_dismiss_mouse_state: MouseStateHandle::default(),
         };
         banner.sync_mouse_states(ctx);
         banner
@@ -178,6 +179,49 @@ impl AiCatalogBanner {
     }
 }
 
+impl AiCatalogBanner {
+    fn render_status_row(
+        &self,
+        model: &AiCatalogDiscoveryModel,
+        appearance: &Appearance,
+    ) -> Option<Box<dyn Element>> {
+        let status = model.install_status()?;
+        let theme = appearance.theme();
+        let font_family = appearance.ui_font_family();
+        let font_size = appearance.ui_font_size();
+        let color = match status.kind {
+            InstallStatusKind::InProgress => internal_colors::neutral_5(theme),
+            InstallStatusKind::Succeeded => theme.ansi_fg_green(),
+            InstallStatusKind::Failed => theme.ansi_fg_red(),
+        };
+        let mut row = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(
+                Shrinkable::new(
+                    1.,
+                    Text::new(status.message.clone(), font_family, font_size)
+                        .soft_wrap(true)
+                        .with_color(color)
+                        .finish(),
+                )
+                .finish(),
+            );
+        if status.kind != InstallStatusKind::InProgress {
+            row.add_child(link(
+                "Dismiss",
+                internal_colors::neutral_5(theme),
+                font_family,
+                font_size,
+                self.status_dismiss_mouse_state.clone(),
+                |ctx| ctx.dispatch_typed_action(AiCatalogBannerAction::DismissStatus),
+            ));
+        }
+        Some(row.finish())
+    }
+}
+
 fn link(
     text: &'static str,
     color: pathfinder_color::ColorU,
@@ -208,15 +252,20 @@ impl View for AiCatalogBanner {
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let model = AiCatalogDiscoveryModel::as_ref(app);
         let appearance = Appearance::as_ref(app);
-        let rows = model
-            .pending()
-            .iter()
-            .rev()
-            .take(MAX_VISIBLE_DISCOVERIES)
-            .filter_map(|discovery| {
-                self.render_row(discovery, model.needs_secret(&discovery.id), appearance)
-            })
+        let mut rows = self
+            .render_status_row(model, appearance)
+            .into_iter()
             .collect_vec();
+        rows.extend(
+            model
+                .pending()
+                .iter()
+                .rev()
+                .take(MAX_VISIBLE_DISCOVERIES)
+                .filter_map(|discovery| {
+                    self.render_row(discovery, model.needs_secret(&discovery.id), appearance)
+                }),
+        );
         if rows.is_empty() {
             return Empty::new().finish();
         }
@@ -247,6 +296,11 @@ impl TypedActionView for AiCatalogBanner {
             AiCatalogBannerAction::Dismiss(discovery_id) => {
                 AiCatalogDiscoveryModel::handle(ctx).update(ctx, |model, ctx| {
                     model.dismiss(discovery_id, ctx);
+                });
+            }
+            AiCatalogBannerAction::DismissStatus => {
+                AiCatalogDiscoveryModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.clear_install_status(ctx);
                 });
             }
         }

@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,10 +15,11 @@ use warpui::{App, EntityId, SingletonEntity as _};
 
 use super::*;
 use crate::ai::agent::api::mcp_context_for_request;
-use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{AIAgentInput, UserQueryMode};
 use crate::ai::blocklist::{RequestInput, ResponseStreamId};
 use crate::ai::llms::LLMId;
+use crate::ai::mcp::FileMCPWatcher;
+use crate::ai::mcp::file_based_manager::FileBasedMCPManager;
 use crate::test_util::ai_agent_tasks::create_api_task;
 use crate::test_util::terminal::initialize_app_for_terminal_view;
 
@@ -29,6 +28,9 @@ const FIXTURE_DOMAIN: &str = "docs.fixture-catalog.dev";
 fn setup(app: &mut App, mode: AiCatalogDiscoveryMode, resolver: Arc<dyn CatalogResolver>) {
     initialize_app_for_terminal_view(app);
     app.add_singleton_model(|_| simple_logger::manager::LogManager::new());
+    // Failed spawns clear stored credentials, which consults file-based servers.
+    app.add_singleton_model(|_| FileMCPWatcher::new_inert());
+    app.add_singleton_model(FileBasedMCPManager::new);
     AISettings::handle(app).update(app, |settings, ctx| {
         settings
             .ai_catalog_discovery_mode
@@ -45,15 +47,12 @@ fn fixture_resolver(server: &FixtureCatalogServer) -> Arc<dyn CatalogResolver> {
     )
 }
 
-fn record_events(app: &mut App) -> Rc<RefCell<Vec<AiCatalogDiscoveryEvent>>> {
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let recorded = events.clone();
-    app.update(|ctx| {
-        ctx.subscribe_to_model(&AiCatalogDiscoveryModel::handle(ctx), move |_, event, _| {
-            recorded.borrow_mut().push(event.clone());
-        });
-    });
-    events
+fn install_status(app: &App) -> Option<InstallStatus> {
+    AiCatalogDiscoveryModel::handle(app).read(app, |model, _| model.install_status().cloned())
+}
+
+fn install_status_kind(app: &App) -> Option<InstallStatusKind> {
+    install_status(app).map(|status| status.kind)
 }
 
 async fn wait_until(description: &str, mut condition: impl FnMut() -> bool) {
@@ -103,7 +102,6 @@ fn shell_command_message(id: &str, command: &str) -> api::Message {
                     ..Default::default()
                 },
             )),
-            ..Default::default()
         })),
         ..Default::default()
     }
@@ -212,7 +210,6 @@ fn web_fetch_discovery_installs_server_into_next_request() {
             AiCatalogDiscoveryMode::LightTouch,
             fixture_resolver(&server),
         );
-        let events = record_events(&mut app);
         assert!(!request_tool_names(&app).contains(&FIXTURE_TOOL_NAME.to_string()));
 
         stream_agent_messages(
@@ -231,24 +228,19 @@ fn web_fetch_discovery_installs_server_into_next_request() {
             .expect("auth-less server installs without a secret");
 
         wait_until("server to run", || {
-            events
-                .borrow()
-                .iter()
-                .any(|event| matches!(event, AiCatalogDiscoveryEvent::Installed { .. }))
+            install_status_kind(&app) == Some(InstallStatusKind::Succeeded)
         })
         .await;
-        let installed = events.borrow().iter().find_map(|event| match event {
-            AiCatalogDiscoveryEvent::Installed {
-                installation_uuid,
-                tool_names,
-                ..
-            } => Some((*installation_uuid, tool_names.clone())),
-            _ => None,
-        });
-        assert_eq!(
-            installed,
-            Some((installation_uuid, vec![FIXTURE_TOOL_NAME.to_string()]))
+        let status = install_status(&app).unwrap();
+        assert!(
+            status.message.contains(FIXTURE_TOOL_NAME),
+            "status should list the new tools: {status:?}"
         );
+        assert!(app.read(|ctx| {
+            TemplatableMCPServerManager::as_ref(ctx)
+                .get_active_discovered_servers()
+                .contains_key(&installation_uuid)
+        }));
         assert!(request_tool_names(&app).contains(&FIXTURE_TOOL_NAME.to_string()));
         assert!(!pending_ids(&app).contains(&server_id));
     });
@@ -312,7 +304,6 @@ fn header_auth_server_requires_and_sends_secret() {
             AiCatalogDiscoveryMode::Full,
             fixture_resolver(&server),
         );
-        let events = record_events(&mut app);
         stream_agent_messages(
             &mut app,
             vec![shell_command_message(
@@ -338,10 +329,7 @@ fn header_auth_server_requires_and_sends_secret() {
             })
             .expect("install starts");
         wait_until("failed install", || {
-            events
-                .borrow()
-                .iter()
-                .any(|event| matches!(event, AiCatalogDiscoveryEvent::InstallFailed { .. }))
+            install_status_kind(&app) == Some(InstallStatusKind::Failed)
         })
         .await;
         assert!(pending_ids(&app).contains(&server_id));
@@ -352,10 +340,7 @@ fn header_auth_server_requires_and_sends_secret() {
             })
             .expect("install starts");
         wait_until("authenticated install", || {
-            events
-                .borrow()
-                .iter()
-                .any(|event| matches!(event, AiCatalogDiscoveryEvent::Installed { .. }))
+            install_status_kind(&app) == Some(InstallStatusKind::Succeeded)
         })
         .await;
         assert!(
@@ -381,7 +366,6 @@ fn undeclared_auth_falls_back_to_bearer_token() {
             AiCatalogDiscoveryMode::LightTouch,
             fixture_resolver(&server),
         );
-        let events = record_events(&mut app);
         stream_agent_messages(
             &mut app,
             vec![web_fetch_message(
@@ -401,10 +385,7 @@ fn undeclared_auth_falls_back_to_bearer_token() {
             .update(&mut app, |model, ctx| model.install(&server_id, None, ctx))
             .expect("auth-less card installs without a secret");
         wait_until("rejected install", || {
-            events
-                .borrow()
-                .iter()
-                .any(|event| matches!(event, AiCatalogDiscoveryEvent::InstallFailed { .. }))
+            install_status_kind(&app) == Some(InstallStatusKind::Failed)
         })
         .await;
         assert!(needs_secret(&app));
@@ -415,10 +396,7 @@ fn undeclared_auth_falls_back_to_bearer_token() {
             })
             .expect("install starts");
         wait_until("authenticated install", || {
-            events
-                .borrow()
-                .iter()
-                .any(|event| matches!(event, AiCatalogDiscoveryEvent::Installed { .. }))
+            install_status_kind(&app) == Some(InstallStatusKind::Succeeded)
         })
         .await;
         assert!(
