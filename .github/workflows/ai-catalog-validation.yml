@@ -86,8 +86,21 @@ jobs:
           RUST_LOG: info
         run: |
           cargo build -p integration --bin integration
-          xvfb-run -a -s "-screen 0 1600x1000x24" \
-            /mnt/target/debug/integration test_ai_catalog_discovery 2>&1 | tee /mnt/integration.log
+          status=0
+          for test in test_ai_catalog_discovery test_ai_catalog_background_discovery; do
+            if ! grep -rq "fn $test" crates/integration/src; then
+              echo "skipping $test (not on this branch)"
+              continue
+            fi
+            echo "=== $test ===" | tee -a /mnt/integration.log
+            xvfb-run -a -s "-screen 0 1600x1000x24" \
+              /mnt/target/debug/integration "$test" > /mnt/$test.log 2>&1
+            code=$?
+            tail -40 /mnt/$test.log | tee -a /mnt/integration.log
+            echo "$test exit $code" | tee -a /mnt/integration.log
+            [ $code -eq 0 ] || status=1
+          done
+          exit $status
 
       - name: Upload artifacts
         if: ${{ always() }}
@@ -98,4 +111,5 @@ jobs:
             /mnt/artifacts
             /mnt/app-tests.log
             /mnt/integration.log
+            /mnt/test_ai_catalog_*.log
           if-no-files-found: ignore
