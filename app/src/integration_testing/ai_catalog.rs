@@ -224,6 +224,24 @@ pub fn set_background_discovery_only() -> TestStep {
     )
 }
 
+/// Turns inline discovery to Full and background discovery off.
+pub fn set_inline_discovery_only() -> TestStep {
+    new_step_with_default_assertions("Switch Server Card discovery to inline only").with_action(
+        |app, _, _| {
+            AISettings::handle(app).update(app, |settings, ctx| {
+                settings
+                    .ai_catalog_discovery_mode
+                    .set_value(AiCatalogDiscoveryMode::Full, ctx)
+                    .expect("discovery mode should be settable");
+                settings
+                    .ai_catalog_background_discovery_enabled
+                    .set_value(false, ctx)
+                    .expect("background discovery should be settable");
+            });
+        },
+    )
+}
+
 /// Starts a background run for `user_query` as if the user had just submitted it, and waits for
 /// the running indicator.
 pub fn start_background_discovery(user_query: &'static str) -> TestStep {

@@ -17,8 +17,8 @@ use std::time::Duration;
 use ai_catalog::reasoner::{API_KEY_ENV, BASE_URL_ENV};
 use ai_catalog::test_support::StubLlmServer;
 use warp::integration_testing::ai_catalog::{
-    open_latest_background_trace, set_background_discovery_only, start_background_discovery,
-    wait_for_background_discovery,
+    open_latest_background_trace, set_background_discovery_only, set_inline_discovery_only,
+    start_background_discovery, wait_for_background_discovery,
 };
 use warp::integration_testing::settings::{open_settings_page, type_settings_search};
 use warp::integration_testing::terminal::wait_until_bootstrapped_single_pane_for_tab;
@@ -74,5 +74,12 @@ pub fn test_ai_catalog_background_discovery() -> Builder {
         .with_step(capture(
             "Inline and background switches",
             "10-settings-modes.png",
+        ))
+        .with_step(set_inline_discovery_only())
+        .with_step(capture("Switched to inline only", "11-settings-inline.png"))
+        .with_step(set_background_discovery_only())
+        .with_step(capture(
+            "Switched back to background only",
+            "12-settings-background.png",
         ))
 }
