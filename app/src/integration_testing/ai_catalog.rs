@@ -2,12 +2,14 @@
 
 use ai_catalog::DomainObservation;
 use settings::Setting as _;
+use warp_multi_agent_api as api;
 use warpui::integration::TestStep;
 use warpui::{App, SingletonEntity as _, async_assert};
 
 use crate::ai::agent::api::mcp_context_for_request;
 use crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel;
 use crate::integration_testing::step::new_step_with_default_assertions;
+use crate::integration_testing::view_getters::single_terminal_view_for_tab;
 use crate::settings::{AISettings, AiCatalogDiscoveryMode};
 use crate::workspace::{Workspace, WorkspaceAction};
 
@@ -99,4 +101,106 @@ fn request_tool_names(app: &App) -> Vec<String> {
             })
             .unwrap_or_default()
     })
+}
+
+/// One synthetic agent turn for demos: the user's prompt, the page the agent fetched (if any), and
+/// a short agent reply.
+pub struct SyntheticAgentTurn {
+    pub prompt: &'static str,
+    /// `(url, title)` of a page the agent fetched.
+    pub fetched_page: Option<(&'static str, &'static str)>,
+    pub reply: &'static str,
+}
+
+/// Replaces the prompt typed into the input with a rendered conversation of `turns` (through the
+/// same restore path real conversations use), then feeds the last turn's fetch (if any) to
+/// discovery and waits for `expected_pending` discoveries. Agent turns need warp-server, so the responses are
+/// synthetic.
+pub fn render_synthetic_agent_turns(
+    turns: &'static [SyntheticAgentTurn],
+    expected_pending: usize,
+) -> TestStep {
+    new_step_with_default_assertions("Render the synthetic agent turn")
+        .with_action(move |app, window_id, _| {
+            let terminal_view = single_terminal_view_for_tab(app, window_id, 0);
+            terminal_view.update(app, |view, ctx| {
+                view.input().update(ctx, |input, ctx| {
+                    input.clear_buffer_and_reset_undo_stack(ctx);
+                });
+                view.load_conversation_from_tasks(synthetic_conversation(turns), ctx);
+            });
+            if let Some((url, _)) = turns.last().and_then(|turn| turn.fetched_page) {
+                let urls = vec![url.to_string()];
+                AiCatalogDiscoveryModel::handle(app).update(app, |model, ctx| {
+                    model.observe(&DomainObservation::WebFetch { urls: &urls }, ctx);
+                });
+            }
+        })
+        .add_named_assertion(
+            format!("{expected_pending} discoveries pending"),
+            move |app, _| {
+                let pending = pending_discovery_ids(app);
+                async_assert!(
+                    pending.len() == expected_pending,
+                    "expected {expected_pending} pending discoveries, got {pending:?}"
+                )
+            },
+        )
+}
+
+fn synthetic_conversation(turns: &[SyntheticAgentTurn]) -> api::ConversationData {
+    use api::message::web_fetch::{Status, status};
+
+    let task_id = "synthetic-demo-task";
+    let mut messages = Vec::new();
+    for (index, turn) in turns.iter().enumerate() {
+        let request_id = format!("synthetic-demo-request-{index}");
+        let wrap = |suffix: &str, message| api::Message {
+            id: format!("synthetic-demo-{index}-{suffix}"),
+            task_id: task_id.to_string(),
+            request_id: request_id.clone(),
+            message: Some(message),
+            ..Default::default()
+        };
+        messages.push(wrap(
+            "query",
+            api::message::Message::UserQuery(api::message::UserQuery {
+                query: turn.prompt.to_string(),
+                ..Default::default()
+            }),
+        ));
+        if let Some((url, title)) = turn.fetched_page {
+            messages.push(wrap(
+                "fetch",
+                api::message::Message::WebFetch(api::message::WebFetch {
+                    status: Some(Status {
+                        r#type: Some(status::Type::Success(status::Success {
+                            pages: vec![status::success::FetchedPage {
+                                url: url.to_string(),
+                                title: title.to_string(),
+                                success: true,
+                            }],
+                        })),
+                    }),
+                }),
+            ));
+        }
+        messages.push(wrap(
+            "output",
+            api::message::Message::AgentOutput(api::message::AgentOutput {
+                text: turn.reply.to_string(),
+            }),
+        ));
+    }
+    api::ConversationData {
+        tasks: vec![api::Task {
+            id: task_id.to_string(),
+            messages,
+            dependencies: None,
+            description: String::new(),
+            summary: String::new(),
+            server_data: String::new(),
+        }],
+        ..Default::default()
+    }
 }
