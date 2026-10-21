@@ -17,15 +17,24 @@ use std::time::Duration;
 use ai_catalog::reasoner::{API_KEY_ENV, BASE_URL_ENV};
 use ai_catalog::test_support::StubLlmServer;
 use warp::integration_testing::ai_catalog::{
-    open_latest_background_trace, set_background_discovery_only, set_inline_discovery_only,
-    start_background_discovery, wait_for_background_discovery,
+    SyntheticAgentTurn, open_latest_background_trace, render_synthetic_agent_turns,
+    set_background_discovery_only, set_inline_discovery_only, start_background_discovery,
+    wait_for_background_discovery,
 };
 use warp::integration_testing::settings::{open_settings_page, type_settings_search};
 use warp::integration_testing::terminal::wait_until_bootstrapped_single_pane_for_tab;
 use warp::settings_view::SettingsSection;
 use warpui_core::integration::TestStep;
 
+use super::ai_catalog_discovery::type_prompt;
 use crate::Builder;
+
+const GITHUB_PROMPT: &str = "Go to my GitHub and summarise my open pull requests";
+static GITHUB_TURN: [SyntheticAgentTurn; 1] = [SyntheticAgentTurn {
+    prompt: GITHUB_PROMPT,
+    fetched_page: None,
+    reply: "(synthetic agent reply) Looking at your open pull requests…",
+}];
 
 const GITHUB_VERDICT: &str = r#"{"intent": "Triage the user's open pull requests on GitHub.", "candidates": [{"domain": "github.com", "reason": "GitHub publishes the official GitHub MCP server at its own domain"}]}"#;
 
@@ -37,7 +46,7 @@ fn capture(name: &str, screenshot: &str) -> TestStep {
 }
 
 pub fn test_ai_catalog_background_discovery() -> Builder {
-    Builder::new()
+    let builder = Builder::new()
         .with_setup(|utils| {
             // Slow enough that the running indicator is on screen for the first screenshot.
             let stub = StubLlmServer::start(0, GITHUB_VERDICT.to_string(), Duration::from_secs(8))
@@ -51,10 +60,10 @@ pub fn test_ai_catalog_background_discovery() -> Builder {
             std::mem::forget(stub);
         })
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
-        .with_step(set_background_discovery_only())
-        .with_step(start_background_discovery(
-            "go to my github and triage my open pull requests",
-        ))
+        .with_step(set_background_discovery_only());
+    type_prompt(builder, GITHUB_PROMPT)
+        .with_step(render_synthetic_agent_turns(&GITHUB_TURN, 0))
+        .with_step(start_background_discovery(GITHUB_PROMPT))
         .with_step(capture(
             "Background discovery running above the input",
             "07-background-running.png",

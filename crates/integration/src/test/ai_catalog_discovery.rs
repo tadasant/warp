@@ -69,7 +69,7 @@ fn pause(name: &str, screenshot: &str) -> TestStep {
 }
 
 /// Types `prompt` into the input a few words at a time and holds it on screen long enough to read.
-fn type_prompt(mut builder: Builder, prompt: &str) -> Builder {
+pub(crate) fn type_prompt(mut builder: Builder, prompt: &str) -> Builder {
     let words: Vec<&str> = prompt.split_inclusive(' ').collect();
     for chunk in words.chunks(3) {
         let chunk = chunk.concat();
