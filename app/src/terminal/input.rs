@@ -1885,6 +1885,10 @@ pub struct Input {
 
     buy_credits_banner: ViewHandle<BuyCreditsBanner>,
     agent_status_view: ViewHandle<BlocklistAIStatusBar>,
+    /// AI Catalog discovery suggestions, rendered directly above the input. Absent when the
+    /// discovery model isn't registered (e.g. in tests).
+    #[cfg(not(target_family = "wasm"))]
+    ai_catalog_banner: Option<ViewHandle<crate::ai::ai_catalog_banner::AiCatalogBanner>>,
     /// Optional queued-prompts panel rendered between `agent_status_view` and the input editor.
     /// Constructed in [`Input::new`] when [`FeatureFlag::QueueSlashCommand`] is enabled.
     queued_prompts_panel: Option<ViewHandle<QueuedPromptsPanelView>>,
@@ -4075,6 +4079,11 @@ impl Input {
             }
         });
 
+        #[cfg(not(target_family = "wasm"))]
+        let ai_catalog_banner = ctx
+            .has_singleton_model::<crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel>()
+            .then(|| ctx.add_typed_action_view(crate::ai::ai_catalog_banner::AiCatalogBanner::new));
+
         let agent_status_view = ctx.add_typed_action_view(|ctx| {
             BlocklistAIStatusBar::new(
                 ai_controller.clone(),
@@ -4212,6 +4221,8 @@ impl Input {
             weak_view_handle: ctx.handle(),
             buy_credits_banner,
             agent_status_view,
+            #[cfg(not(target_family = "wasm"))]
+            ai_catalog_banner,
             queued_prompts_panel,
             agent_view_controller,
             agent_input_footer,
@@ -16351,6 +16362,15 @@ impl Input {
         };
 
         container.finish()
+    }
+
+    /// AI Catalog discovery suggestions to place directly above the input box.
+    fn render_ai_catalog_banner(&self) -> Box<dyn Element> {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(banner) = &self.ai_catalog_banner {
+            return ChildView::new(banner).finish();
+        }
+        warpui::elements::Empty::new().finish()
     }
 
     /// Renders a banner that should stay next to the input box.

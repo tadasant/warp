@@ -201,6 +201,7 @@ impl Input {
                             None
                         },
                         Some(ChildView::new(&self.agent_status_view).finish()),
+                        Some(self.render_ai_catalog_banner()),
                         Some(input),
                     ]
                     .into_iter()
@@ -212,6 +213,7 @@ impl Input {
                     [
                         Some(input),
                         Some(ChildView::new(&self.agent_status_view).finish()),
+                        Some(self.render_ai_catalog_banner()),
                         if hide_menu {
                             None
                         } else if is_slash_commands {
@@ -261,7 +263,11 @@ impl Input {
                     }
                 }
 
-                column.add_children([ChildView::new(&self.agent_status_view).finish(), input]);
+                column.add_children([
+                    ChildView::new(&self.agent_status_view).finish(),
+                    self.render_ai_catalog_banner(),
+                    input,
+                ]);
 
                 if !hide_menu {
                     if is_slash_commands && should_render_below {

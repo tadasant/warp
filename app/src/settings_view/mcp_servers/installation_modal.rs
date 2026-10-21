@@ -70,6 +70,9 @@ pub struct InstallationModalBody {
     install_button: ViewHandle<ActionButton>,
     close_button_mouse_state: MouseStateHandle,
     is_shared: bool,
+    /// Replaces the shared/other-device source indicator when set.
+    source_label: Option<String>,
+    mask_text_inputs: bool,
 }
 
 impl InstallationModalBody {
@@ -97,7 +100,22 @@ impl InstallationModalBody {
             install_button,
             close_button_mouse_state: Default::default(),
             is_shared: false,
+            source_label: None,
+            mask_text_inputs: false,
         }
+    }
+
+    /// A body whose free-text inputs are masked, for collecting secrets such as auth tokens.
+    pub fn new_for_secrets(ctx: &mut ViewContext<Self>) -> Self {
+        Self {
+            mask_text_inputs: true,
+            ..Self::new(ctx)
+        }
+    }
+
+    pub fn set_source_label(&mut self, source_label: Option<String>, ctx: &mut ViewContext<Self>) {
+        self.source_label = source_label;
+        ctx.notify();
     }
 
     pub fn set_templatable_mcp_server(
@@ -113,6 +131,7 @@ impl InstallationModalBody {
             self.is_shared = TemplatableMCPServerManager::as_ref(ctx)
                 .is_server_template_shared(templatable_mcp_server.uuid, ctx);
 
+            let is_password = self.mask_text_inputs;
             self.variable_inputs = templatable_mcp_server
                 .template
                 .variables
@@ -156,6 +175,7 @@ impl InstallationModalBody {
                             EditorView::single_line(
                                 SingleLineEditorOptions {
                                     soft_wrap: true,
+                                    is_password,
                                     ..Default::default()
                                 },
                                 ctx,
@@ -412,7 +432,7 @@ impl InstallationModalBody {
         form_column
     }
 
-    fn render_source_indicator(is_shared: bool, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_source_indicator(source_text: &str, appearance: &Appearance) -> Box<dyn Element> {
         let info_icon = ConstrainedBox::new(
             Icon::Info
                 .to_warpui_icon(appearance.theme().disabled_ui_text_color())
@@ -421,12 +441,6 @@ impl InstallationModalBody {
         .with_width(16.)
         .with_height(16.)
         .finish();
-
-        let source_text = if is_shared {
-            "Shared from team"
-        } else {
-            "From another device"
-        };
 
         let label_text = Text::new_inline(
             source_text.to_string(),
@@ -457,7 +471,12 @@ impl InstallationModalBody {
     }
 
     fn render_buttons_row(&self, appearance: &Appearance) -> Box<dyn Element> {
-        let source_indicator = Self::render_source_indicator(self.is_shared, appearance);
+        let source_text = match &self.source_label {
+            Some(label) => label.as_str(),
+            None if self.is_shared => "Shared from team",
+            None => "From another device",
+        };
+        let source_indicator = Self::render_source_indicator(source_text, appearance);
         let action_buttons = self.render_action_buttons();
 
         let spacer = Shrinkable::new(1., Container::new(Empty::new().finish()).finish()).finish();

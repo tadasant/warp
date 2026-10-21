@@ -398,6 +398,11 @@ pub enum WorkspaceAction {
     /// Closes the focused panel. This happens as an explicit action from the user.
     ClosePanel,
     CopyTextToClipboard(String),
+    /// Installs an MCP server discovered from a domain's AI Catalog, prompting for a secret first
+    /// when its Server Card requires header auth.
+    InstallDiscoveredMcpServer {
+        discovery_id: String,
+    },
     /// Copies a path to the clipboard based on the focused pane: the open file's display path
     /// if the focused pane is the rendered file viewer (`FilePane`), otherwise the focused
     /// terminal session's working directory. No-op if neither yields a path.
@@ -1102,6 +1107,7 @@ impl WorkspaceAction {
             | ToggleVerticalTabsShowDetailsOnHover
             | ToggleWelcomeTips
             | CopyTextToClipboard(_)
+            | InstallDiscoveredMcpServer { .. }
             | CopyCurrentPath
             | CopyAccessTokenToClipboard
             | OpenTabConfigRepoPicker { .. }

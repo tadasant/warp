@@ -385,6 +385,11 @@ integration_tests! {
     #[ignore = "Manual test: requires real display for frame capture"]
     test_video_recording,
 
+    // Server Card discovery screenshots — needs a real display and network access to the live
+    // modelcontextprotocol.io MCP endpoint, run manually
+    #[ignore = "Manual test: requires real display and network access"]
+    test_ai_catalog_discovery,
+
     // Rich Input Ctrl+Enter submit toggle (issue #11588)
     test_rich_input_toggle_on_enter_inserts_newline_and_ctrl_enter_submits,
     // Regression: Enter must accept inline menus (not insert newline) when toggle=true

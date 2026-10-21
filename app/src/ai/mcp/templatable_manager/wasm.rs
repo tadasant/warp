@@ -110,6 +110,17 @@ impl TemplatableMCPServerManager {
         log::warn!("Ephemeral MCP server spawning not supported in WASM");
     }
 
+    /// Spawns a server installed from a discovered AI Catalog Server Card.
+    ///
+    /// This is a no-op in WASM, as MCP servers are not supported in WASM.
+    pub fn spawn_discovered_server(
+        &mut self,
+        _installation: TemplatableMCPServerInstallation,
+        _ctx: &mut ModelContext<Self>,
+    ) {
+        log::warn!("Discovered MCP server spawning not supported in WASM");
+    }
+
     /// Shuts down a running MCP server.
     ///
     /// This is a no-op in WASM, as MCP servers are not supported in WASM.

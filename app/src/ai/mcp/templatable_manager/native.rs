@@ -408,6 +408,7 @@ impl TemplatableMCPServerManager {
             pending_oauth_csrf: Default::default(),
             authorization_urls: Default::default(),
             cli_spawned_server_uuids: Default::default(),
+            discovered_server_uuids: Default::default(),
             builtin_server_uuids: Default::default(),
             builtin_server_token: Default::default(),
             server_loggers: Default::default(),
@@ -763,6 +764,16 @@ impl TemplatableMCPServerManager {
         ctx: &mut ModelContext<Self>,
     ) {
         self.cli_spawned_server_uuids.insert(installation.uuid());
+        self.spawn_ephemeral_server(installation, ctx);
+    }
+
+    /// Spawns an ephemeral remote MCP server installed from a discovered AI Catalog Server Card.
+    pub fn spawn_discovered_server(
+        &mut self,
+        installation: TemplatableMCPServerInstallation,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.discovered_server_uuids.insert(installation.uuid());
         self.spawn_ephemeral_server(installation, ctx);
     }
 
