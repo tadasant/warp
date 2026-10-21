@@ -96,21 +96,19 @@ jobs:
             echo "=== $test ===" | tee -a /mnt/integration.log
             case "$test" in
               test_ai_catalog_discovery)
-                printf '%s\n%s' \
-                  "DEMO: agent turns are synthetic events (no Warp login); UI actions are driven by the test harness." \
-                  "LIVE: github.com AI Catalog + Server Card, modelcontextprotocol.io MCP server. Auth-required server is a local fixture." \
+                printf '%s' \
+                  "Agent replies synthetic (no Warp login) | live: github.com catalog, modelcontextprotocol.io MCP | auth server = local fixture" \
                   > /mnt/caption-$test.txt ;;
               test_ai_catalog_background_discovery)
-                printf '%s\n%s' \
-                  "DEMO: the prompt is a synthetic event (no Warp login); the reasoner is a local stub with a scripted reply." \
-                  "LIVE: the github.com AI Catalog + Server Card probe. UI actions are driven by the test harness." \
+                printf '%s' \
+                  "Agent turn synthetic (no Warp login) | reasoner = local stub | live: github.com catalog probe" \
                   > /mnt/caption-$test.txt ;;
             esac
             Xvfb :99 -screen 0 1280x800x24 > /mnt/$test-xvfb.log 2>&1 &
             xvfb_pid=$!
             sleep 2
             ffmpeg -y -loglevel warning -f x11grab -video_size 1280x800 -framerate 15 -i :99 \
-              -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=/mnt/caption-$test.txt:fontsize=15:fontcolor=white:line_spacing=4:box=1:boxcolor=black@0.75:boxborderw=8:x=12:y=h-th-14" \
+              -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=/mnt/caption-$test.txt:fontsize=11:fontcolor=white@0.85:box=1:boxcolor=black@0.6:boxborderw=5:x=w-tw-12:y=44" \
               -c:v libx264 -preset veryfast -pix_fmt yuv420p -movflags +faststart \
               /mnt/artifacts/$test.mp4 > /mnt/$test-ffmpeg.log 2>&1 &
             ffmpeg_pid=$!
