@@ -94,16 +94,16 @@ use crate::server::telemetry::{
 };
 use crate::settings::{
     AIAutoDetectionEnabled, AICommandDenylist, AISettings, AISettingsChangedEvent,
-    AgentModeQuerySuggestionsEnabled, AiCatalogDiscoveryMode, AutoApproveBypassesCommandDenylist,
-    AwsBedrockAutoLogin, AwsBedrockCredentialsEnabled, CanUseWarpCreditsForFallback,
-    EnableAiCommandSearchHashTrigger, GeminiEnterpriseCredentialsEnabled,
-    GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory, InputSettings,
-    IntelligentAutosuggestionsEnabled, LongRunningCommandSubmissionMode, NLDInTerminalEnabled,
-    NaturalLanguageAutosuggestionsEnabled, OrchestrationMessageDisplayMode, PromptSubmissionMode,
-    SharedBlockTitleGenerationEnabled, ShouldRenderUseAgentToolbarForUserCommands,
-    ShouldShowOzUpdatesInZeroState, ShowAgentTips, ShowConversationHistory, ShowHintText,
-    ThinkingDisplayMode, VOICE_INPUT_LANGUAGES, VoiceInputEnabled, VoiceInputLanguage,
-    VoiceInputToggleKey,
+    AgentModeQuerySuggestionsEnabled, AiCatalogBackgroundDiscoveryEnabled, AiCatalogDiscoveryMode,
+    AutoApproveBypassesCommandDenylist, AwsBedrockAutoLogin, AwsBedrockCredentialsEnabled,
+    CanUseWarpCreditsForFallback, EnableAiCommandSearchHashTrigger,
+    GeminiEnterpriseCredentialsEnabled, GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory,
+    InputSettings, IntelligentAutosuggestionsEnabled, LongRunningCommandSubmissionMode,
+    NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled, OrchestrationMessageDisplayMode,
+    PromptSubmissionMode, SharedBlockTitleGenerationEnabled,
+    ShouldRenderUseAgentToolbarForUserCommands, ShouldShowOzUpdatesInZeroState, ShowAgentTips,
+    ShowConversationHistory, ShowHintText, ThinkingDisplayMode, VOICE_INPUT_LANGUAGES,
+    VoiceInputEnabled, VoiceInputLanguage, VoiceInputToggleKey,
 };
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
@@ -551,6 +551,15 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
                         & id!(flags::AUTO_APPROVE_BYPASSES_COMMAND_DENYLIST_FLAG),
                 ),
                 None,
+            )
+            .with_group(bindings::BindingGroup::WarpAi),
+            ToggleSettingActionPair::new(
+                "background MCP Server Card discovery",
+                builder(SettingsAction::WarpAgent(
+                    WarpAgentPageAction::ToggleAiCatalogBackgroundDiscovery,
+                )),
+                &(context.clone() & id!(flags::IS_ANY_AI_ENABLED)),
+                flags::AI_CATALOG_BACKGROUND_DISCOVERY,
             )
             .with_group(bindings::BindingGroup::WarpAi),
             ToggleSettingActionPair::new(
@@ -2447,7 +2456,10 @@ impl WarpAgentPageView {
 
         categories.push(Category::new(
             "MCP Server Discovery",
-            vec![Box::new(AiCatalogDiscoveryWidget)],
+            vec![
+                Box::new(AiCatalogDiscoveryWidget),
+                Box::new(AiCatalogBackgroundDiscoveryWidget::default()),
+            ],
         ));
 
         categories.push(Category::new(
@@ -2648,6 +2660,7 @@ pub enum WarpAgentPageAction {
     ToggleAmpersandHandoff,
     ToggleAutoHandoffOnSleep,
     ToggleShowConversationHistory,
+    ToggleAiCatalogBackgroundDiscovery,
 }
 
 impl TypedActionView for WarpAgentPageView {
@@ -3134,6 +3147,16 @@ impl TypedActionView for WarpAgentPageView {
                     },
                     ctx
                 );
+                ctx.notify();
+            }
+            WarpAgentPageAction::ToggleAiCatalogBackgroundDiscovery => {
+                AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(
+                        settings
+                            .ai_catalog_background_discovery_enabled
+                            .toggle_and_save_value(ctx)
+                    );
+                });
                 ctx.notify();
             }
             WarpAgentPageAction::ToggleShowConversationHistory => {
@@ -4503,6 +4526,38 @@ impl SettingsWidget for ShowConversationHistoryWidget {
     }
 }
 
+#[derive(Default)]
+struct AiCatalogBackgroundDiscoveryWidget {
+    toggle: SwitchStateHandle,
+}
+
+impl SettingsWidget for AiCatalogBackgroundDiscoveryWidget {
+    type View = WarpAgentPageView;
+
+    fn search_terms(&self) -> &str {
+        "mcp server card discovery ai catalog background reasoner dual track async suggestions"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        _appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let ai_settings = AISettings::as_ref(app);
+        render_ai_setting_toggle::<AiCatalogBackgroundDiscoveryEnabled>(
+            "Background Server Card discovery (reasons about your request and suggests vendor \
+             MCP servers; needs AI_CATALOG_REASONER_API_KEY)",
+            WarpAgentPageAction::ToggleAiCatalogBackgroundDiscovery,
+            *ai_settings.ai_catalog_background_discovery_enabled,
+            ai_settings.is_any_ai_enabled(app),
+            self.toggle.clone(),
+            &view.local_only_icon_tooltip_states,
+            app,
+        )
+    }
+}
+
 struct AiCatalogDiscoveryWidget;
 
 impl AiCatalogDiscoveryWidget {
@@ -4545,7 +4600,7 @@ impl SettingsWidget for AiCatalogDiscoveryWidget {
         let is_any_ai_enabled = AISettings::as_ref(app).is_any_ai_enabled(app);
         render_dropdown_item(
             appearance,
-            "Server Card discovery",
+            "Inline Server Card discovery",
             Some(
                 "Watch the domains agent sessions touch and offer to install the MCP servers and \
                  Skills they advertise via /.well-known/ai-catalog.json. Off: never probe. \

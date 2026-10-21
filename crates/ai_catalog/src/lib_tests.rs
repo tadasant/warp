@@ -467,3 +467,127 @@ fn http_resolver_does_not_follow_redirects() {
     let resolver = HttpResolver::default().with_origin_override("redirect.dev", &origin);
     assert!(block_on(resolver.resolve("redirect.dev")).is_empty());
 }
+
+mod reasoner_tests {
+    use std::time::Duration;
+
+    use futures::executor::block_on;
+
+    use crate::reasoner::{
+        AnthropicLlm, ReasonerLlm, SYSTEM_PROMPT, TraceStep, build_user_prompt, parse_verdict,
+        trace_to_markdown,
+    };
+    use crate::resolver::CatalogResolver;
+    use crate::test_support::StubLlmServer;
+    use crate::trust::{NudgeOnlyPolicy, SuggestionOrigin, TrustPolicy};
+    use crate::{DefaultResolver, HttpResolver};
+
+    const GITHUB_VERDICT: &str = r#"{"intent": "Triage the user's open GitHub pull requests.", "candidates": [{"domain": "github.com", "reason": "GitHub publishes the official GitHub MCP server"}]}"#;
+
+    #[test]
+    fn parses_verdict_with_fences_and_normalizes_domains() {
+        let raw = format!(
+            "Sure:\n```json\n{}\n```",
+            r#"{"intent":"x","candidates":[{"domain":"https://www.GitHub.com/","reason":"a"},{"domain":"github.com","reason":"dup"},{"domain":"localhost","reason":"private"},{"domain":"linear.app"}]}"#
+        );
+        let verdict = parse_verdict(&raw).unwrap();
+        let domains: Vec<_> = verdict
+            .candidates
+            .iter()
+            .map(|c| c.domain.as_str())
+            .collect();
+        assert_eq!(domains, ["github.com", "linear.app"]);
+        assert!(parse_verdict("no json here").is_err());
+    }
+
+    #[test]
+    fn user_prompt_includes_transcript_and_probed_domains() {
+        let prompt =
+            build_user_prompt("User: go to my github", &["modelcontextprotocol.io".into()]);
+        assert!(prompt.contains("User: go to my github"));
+        assert!(prompt.contains("modelcontextprotocol.io"));
+        assert!(build_user_prompt("x", &[]).contains("(none)"));
+    }
+
+    #[test]
+    fn anthropic_client_sends_messages_request_and_reads_text() {
+        let stub =
+            StubLlmServer::start(0, GITHUB_VERDICT.to_string(), Duration::from_millis(0)).unwrap();
+        let llm = AnthropicLlm::new(
+            "test-key".to_string(),
+            "claude-opus-5-5".to_string(),
+            stub.base_url().to_string(),
+        );
+        let reply = block_on(llm.complete(SYSTEM_PROMPT, "User: go to my github")).unwrap();
+        assert_eq!(reply, GITHUB_VERDICT);
+        let request = &stub.requests()[0];
+        assert_eq!(request["model"], "claude-opus-5-5");
+        assert_eq!(request["system"], SYSTEM_PROMPT);
+        assert_eq!(request["messages"][0]["content"], "User: go to my github");
+        assert_eq!(request["output_config"]["effort"], "low");
+        assert!(llm.describe().contains(stub.base_url()));
+    }
+
+    #[test]
+    fn nudge_only_policy_never_auto_installs() {
+        let discovery = crate::fixtures::fixtures_for("modelcontextprotocol.io").remove(0);
+        assert!(!NudgeOnlyPolicy.may_auto_install(&discovery, SuggestionOrigin::Background));
+        assert!(!NudgeOnlyPolicy.may_auto_install(&discovery, SuggestionOrigin::Inline));
+    }
+
+    #[test]
+    fn trace_markdown_lists_every_step() {
+        let markdown = trace_to_markdown(
+            "run",
+            &[
+                TraceStep::Intent {
+                    text: "triage PRs".into(),
+                },
+                TraceStep::Decision {
+                    text: "nothing to suggest".into(),
+                },
+            ],
+        );
+        assert!(markdown.contains("## Inferred intent\n\ntriage PRs"));
+        assert!(markdown.contains("## Decision\n\nnothing to suggest"));
+    }
+
+    /// The background path end to end against the real
+    /// `https://github.com/.well-known/ai-catalog.json`, with the reasoner's reply scripted by
+    /// the stub. Opt in with `AI_CATALOG_LIVE=1`.
+    #[test]
+    fn stubbed_reasoner_verdict_resolves_live_github_catalog() {
+        if std::env::var_os("AI_CATALOG_LIVE").is_none() {
+            eprintln!("skipping live test; set AI_CATALOG_LIVE=1 to run it");
+            return;
+        }
+        let stub =
+            StubLlmServer::start(0, GITHUB_VERDICT.to_string(), Duration::from_millis(0)).unwrap();
+        let llm = AnthropicLlm::new(
+            "test-key".to_string(),
+            "claude-opus-5-5".to_string(),
+            stub.base_url().to_string(),
+        );
+        let reply = block_on(llm.complete(
+            SYSTEM_PROMPT,
+            &build_user_prompt("User: go to my github and triage my open PRs", &[]),
+        ))
+        .unwrap();
+        let verdict = parse_verdict(&reply).unwrap();
+        assert_eq!(verdict.candidates[0].domain, "github.com");
+
+        let resolver = DefaultResolver::new(Some(HttpResolver::default()));
+        let traced = block_on(resolver.resolve_traced("github.com"));
+        assert_eq!(
+            traced.probes[0].url,
+            "https://github.com/.well-known/ai-catalog.json"
+        );
+        assert_eq!(traced.probes[0].outcome, "200 OK");
+        assert!(
+            traced
+                .discoveries
+                .iter()
+                .any(|d| d.id == "github.com#io.github.github/github-mcp-server" && !d.fixture)
+        );
+    }
+}

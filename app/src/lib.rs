@@ -2401,6 +2401,8 @@ pub(crate) fn initialize_app(
     // registered after both.
     #[cfg(not(target_family = "wasm"))]
     ctx.add_singleton_model(crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel::new);
+    #[cfg(not(target_family = "wasm"))]
+    ctx.add_singleton_model(crate::ai::ai_catalog_reasoner::AiCatalogReasonerModel::new);
 
     // MCPGalleryManager subscribes to UpdateManager so that it can be notified when gallery items are updated.
     // The registration of this singleton must be after UpdateManager is registered.

@@ -3,6 +3,7 @@
 //! to be run.
 
 mod agent_mode;
+mod ai_catalog_background_discovery;
 mod ai_catalog_discovery;
 mod ai_assistant;
 mod ai_document;
@@ -52,6 +53,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub use agent_mode::*;
+pub use ai_catalog_background_discovery::*;
 pub use ai_catalog_discovery::*;
 pub use ai_assistant::*;
 pub use ai_document::*;

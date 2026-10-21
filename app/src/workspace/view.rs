@@ -25410,6 +25410,12 @@ impl TypedActionView for Workspace {
             }
             #[cfg(target_family = "wasm")]
             InstallDiscoveredMcpServer { .. } => {}
+            #[cfg(not(target_family = "wasm"))]
+            OpenAiCatalogDiscoveryTrace { run_id } => {
+                self.open_ai_catalog_discovery_trace(*run_id, ctx);
+            }
+            #[cfg(target_family = "wasm")]
+            OpenAiCatalogDiscoveryTrace { .. } => {}
             CopyCurrentPath => {
                 let path = self
                     .active_tab_pane_group()
@@ -26844,6 +26850,10 @@ impl View for Workspace {
 
         if AISettings::as_ref(app).is_conversation_history_enabled(app) {
             context.set.insert(flags::SHOW_CONVERSATION_HISTORY);
+        }
+
+        if *AISettings::as_ref(app).ai_catalog_background_discovery_enabled {
+            context.set.insert(flags::AI_CATALOG_BACKGROUND_DISCOVERY);
         }
 
         if *CodeSettings::as_ref(app).show_project_explorer {

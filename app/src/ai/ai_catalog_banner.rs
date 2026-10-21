@@ -17,6 +17,9 @@ use crate::Appearance;
 use crate::ai::ai_catalog_discovery::{
     AiCatalogDiscoveryEvent, AiCatalogDiscoveryModel, InstallStatusKind,
 };
+use crate::ai::ai_catalog_reasoner::{
+    AiCatalogReasonerEvent, AiCatalogReasonerModel, ReasonerRunStatus,
+};
 use crate::workspace::WorkspaceAction;
 
 /// Rows shown at once; older discoveries wait until newer ones are handled.
@@ -26,6 +29,7 @@ const MAX_VISIBLE_DISCOVERIES: usize = 3;
 pub enum AiCatalogBannerAction {
     Dismiss(String),
     DismissStatus,
+    DismissRun(usize),
 }
 
 #[derive(Default)]
@@ -37,6 +41,8 @@ struct RowMouseStates {
 pub struct AiCatalogBanner {
     row_mouse_states: HashMap<String, RowMouseStates>,
     status_dismiss_mouse_state: MouseStateHandle,
+    trace_mouse_state: MouseStateHandle,
+    run_dismiss_mouse_state: MouseStateHandle,
 }
 
 impl AiCatalogBanner {
@@ -50,9 +56,18 @@ impl AiCatalogBanner {
                 }
             },
         );
+        if ctx.has_singleton_model::<AiCatalogReasonerModel>() {
+            ctx.subscribe_to_model(&AiCatalogReasonerModel::handle(ctx), |_, _, event, ctx| {
+                match event {
+                    AiCatalogReasonerEvent::RunsChanged => ctx.notify(),
+                }
+            });
+        }
         let mut banner = Self {
             row_mouse_states: HashMap::new(),
             status_dismiss_mouse_state: MouseStateHandle::default(),
+            trace_mouse_state: MouseStateHandle::default(),
+            run_dismiss_mouse_state: MouseStateHandle::default(),
         };
         banner.sync_mouse_states(ctx);
         banner
@@ -73,6 +88,7 @@ impl AiCatalogBanner {
         &self,
         discovery: &Discovery,
         needs_secret: bool,
+        suggestion_reason: Option<&str>,
         appearance: &Appearance,
     ) -> Option<Box<dyn Element>> {
         let mouse_states = self.row_mouse_states.get(&discovery.id)?;
@@ -101,6 +117,9 @@ impl AiCatalogBanner {
             qualifiers.push("auth required".to_string());
         } else if discovery.auth().is_some_and(|auth| auth.is_oauth()) {
             qualifiers.push("OAuth".to_string());
+        }
+        if let Some(reason) = suggestion_reason {
+            qualifiers.push(reason.to_string());
         }
         if let Some(detail) = detail {
             qualifiers.push(detail);
@@ -224,6 +243,84 @@ impl AiCatalogBanner {
     }
 }
 
+impl AiCatalogBanner {
+    /// The background reasoner's latest run: a running indicator, or its outcome, with a link to
+    /// the full trace.
+    fn render_reasoner_row(
+        &self,
+        app: &AppContext,
+        appearance: &Appearance,
+    ) -> Option<Box<dyn Element>> {
+        if !app.has_singleton_model::<AiCatalogReasonerModel>() {
+            return None;
+        }
+        let run = AiCatalogReasonerModel::as_ref(app).visible_run()?;
+        let theme = appearance.theme();
+        let font_family = appearance.ui_font_family();
+        let font_size = appearance.ui_font_size();
+        let muted = internal_colors::neutral_5(theme);
+        let (text, color) = match run.status {
+            ReasonerRunStatus::Running => (
+                "◌ Background discovery is reasoning about your request…".to_string(),
+                theme.accent().into_solid(),
+            ),
+            ReasonerRunStatus::Finished | ReasonerRunStatus::Failed => (
+                format!(
+                    "Background discovery: {}",
+                    run.summary.as_deref().unwrap_or("done")
+                ),
+                muted,
+            ),
+        };
+        let run_id = run.id;
+        let mut actions = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
+        actions.add_child(
+            Container::new(link(
+                "View trace",
+                theme.accent().into_solid(),
+                font_family,
+                font_size,
+                self.trace_mouse_state.clone(),
+                move |ctx| {
+                    ctx.dispatch_typed_action(WorkspaceAction::OpenAiCatalogDiscoveryTrace {
+                        run_id,
+                    })
+                },
+            ))
+            .with_margin_right(12.)
+            .finish(),
+        );
+        if run.status != ReasonerRunStatus::Running {
+            actions.add_child(link(
+                "Dismiss",
+                muted,
+                font_family,
+                font_size,
+                self.run_dismiss_mouse_state.clone(),
+                move |ctx| ctx.dispatch_typed_action(AiCatalogBannerAction::DismissRun(run_id)),
+            ));
+        }
+        Some(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(
+                    Shrinkable::new(
+                        1.,
+                        Text::new(text, font_family, font_size)
+                            .soft_wrap(true)
+                            .with_color(color)
+                            .finish(),
+                    )
+                    .finish(),
+                )
+                .with_child(actions.finish())
+                .finish(),
+        )
+    }
+}
+
 fn link(
     text: &'static str,
     color: pathfinder_color::ColorU,
@@ -255,8 +352,9 @@ impl View for AiCatalogBanner {
         let model = AiCatalogDiscoveryModel::as_ref(app);
         let appearance = Appearance::as_ref(app);
         let mut rows = self
-            .render_status_row(model, appearance)
+            .render_reasoner_row(app, appearance)
             .into_iter()
+            .chain(self.render_status_row(model, appearance))
             .collect_vec();
         rows.extend(
             model
@@ -265,7 +363,12 @@ impl View for AiCatalogBanner {
                 .rev()
                 .take(MAX_VISIBLE_DISCOVERIES)
                 .filter_map(|discovery| {
-                    self.render_row(discovery, model.needs_secret(&discovery.id), appearance)
+                    self.render_row(
+                        discovery,
+                        model.needs_secret(&discovery.id),
+                        model.suggestion_reason(&discovery.id),
+                        appearance,
+                    )
                 }),
         );
         if rows.is_empty() {
@@ -298,6 +401,11 @@ impl TypedActionView for AiCatalogBanner {
             AiCatalogBannerAction::Dismiss(discovery_id) => {
                 AiCatalogDiscoveryModel::handle(ctx).update(ctx, |model, ctx| {
                     model.dismiss(discovery_id, ctx);
+                });
+            }
+            AiCatalogBannerAction::DismissRun(run_id) => {
+                AiCatalogReasonerModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.dismiss_run(*run_id, ctx);
                 });
             }
             AiCatalogBannerAction::DismissStatus => {

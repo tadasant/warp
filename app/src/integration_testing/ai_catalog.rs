@@ -8,6 +8,7 @@ use warpui::{App, SingletonEntity as _, async_assert};
 
 use crate::ai::agent::api::mcp_context_for_request;
 use crate::ai::ai_catalog_discovery::AiCatalogDiscoveryModel;
+use crate::ai::ai_catalog_reasoner::{AiCatalogReasonerModel, ReasonerRunStatus};
 use crate::integration_testing::step::new_step_with_default_assertions;
 use crate::integration_testing::view_getters::single_terminal_view_for_tab;
 use crate::settings::{AISettings, AiCatalogDiscoveryMode};
@@ -203,4 +204,103 @@ fn synthetic_conversation(turns: &[SyntheticAgentTurn]) -> api::ConversationData
         }],
         ..Default::default()
     }
+}
+
+/// Turns inline discovery off and background discovery on, so the two can be demoed separately.
+pub fn set_background_discovery_only() -> TestStep {
+    new_step_with_default_assertions("Switch Server Card discovery to background only").with_action(
+        |app, _, _| {
+            AISettings::handle(app).update(app, |settings, ctx| {
+                settings
+                    .ai_catalog_discovery_mode
+                    .set_value(AiCatalogDiscoveryMode::Off, ctx)
+                    .expect("discovery mode should be settable");
+                settings
+                    .ai_catalog_background_discovery_enabled
+                    .set_value(true, ctx)
+                    .expect("background discovery should be settable");
+            });
+        },
+    )
+}
+
+/// Turns inline discovery to Full and background discovery off.
+pub fn set_inline_discovery_only() -> TestStep {
+    new_step_with_default_assertions("Switch Server Card discovery to inline only").with_action(
+        |app, _, _| {
+            AISettings::handle(app).update(app, |settings, ctx| {
+                settings
+                    .ai_catalog_discovery_mode
+                    .set_value(AiCatalogDiscoveryMode::Full, ctx)
+                    .expect("discovery mode should be settable");
+                settings
+                    .ai_catalog_background_discovery_enabled
+                    .set_value(false, ctx)
+                    .expect("background discovery should be settable");
+            });
+        },
+    )
+}
+
+/// Starts a background run for `user_query` as if the user had just submitted it, and waits for
+/// the running indicator.
+pub fn start_background_discovery(user_query: &'static str) -> TestStep {
+    new_step_with_default_assertions(&format!("Background discovery for {user_query:?}"))
+        .with_action(move |app, _, _| {
+            AiCatalogReasonerModel::handle(app).update(app, |model, ctx| {
+                model.start_run(user_query.to_string(), format!("User: {user_query}"), ctx);
+            });
+        })
+        .add_named_assertion("background run is in progress", |app, _| {
+            let status = latest_run_status(app);
+            async_assert!(
+                status == Some(ReasonerRunStatus::Running),
+                "expected a running background run, got {status:?}"
+            )
+        })
+}
+
+pub fn wait_for_background_discovery(expected_pending_id: &'static str) -> TestStep {
+    new_step_with_default_assertions("Background discovery finishes")
+        .add_named_assertion("background run finished", |app, _| {
+            let status = latest_run_status(app);
+            async_assert!(
+                status == Some(ReasonerRunStatus::Finished),
+                "expected a finished background run, got {status:?}"
+            )
+        })
+        .add_named_assertion(format!("{expected_pending_id} suggested"), move |app, _| {
+            let pending = pending_discovery_ids(app);
+            async_assert!(
+                pending.iter().any(|id| id == expected_pending_id),
+                "expected {expected_pending_id} pending, got {pending:?}"
+            )
+        })
+}
+
+/// Clicks "View trace" for the latest background run.
+pub fn open_latest_background_trace() -> TestStep {
+    new_step_with_default_assertions("Open the background discovery trace").with_action(
+        |app, window_id, _| {
+            let Some(run_id) = AiCatalogReasonerModel::handle(app)
+                .read(app, |model, _| model.runs().last().map(|run| run.id))
+            else {
+                return;
+            };
+            let workspace_view_id = app
+                .views_of_type::<Workspace>(window_id)
+                .and_then(|views| views.first().map(|view| view.id()))
+                .expect("no workspace view");
+            app.dispatch_typed_action(
+                window_id,
+                &[workspace_view_id],
+                &WorkspaceAction::OpenAiCatalogDiscoveryTrace { run_id },
+            );
+        },
+    )
+}
+
+fn latest_run_status(app: &App) -> Option<ReasonerRunStatus> {
+    AiCatalogReasonerModel::handle(app)
+        .read(app, |model, _| model.runs().last().map(|run| run.status))
 }

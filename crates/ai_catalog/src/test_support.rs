@@ -241,3 +241,88 @@ impl ServerState {
         Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
     }
 }
+
+/// A stand-in for the Anthropic Messages API that answers every `POST /v1/messages` with a
+/// scripted reply after an optional delay. Used wherever no real reasoner key is available; traces
+/// show its URL so evidence produced with it is identifiable.
+pub struct StubLlmServer {
+    base_url: String,
+    requests: Arc<Mutex<Vec<Value>>>,
+}
+
+impl StubLlmServer {
+    pub fn start(port: u16, reply: String, delay: std::time::Duration) -> std::io::Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", port))?;
+        let base_url = format!("http://{}", listener.local_addr()?);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = requests.clone();
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let reply = reply.clone();
+                let recorded = recorded.clone();
+                thread::spawn(move || {
+                    let _ = serve_stub_llm(stream, &reply, delay, &recorded);
+                });
+            }
+        });
+        Ok(Self { base_url, requests })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// JSON bodies of the requests received so far.
+    pub fn requests(&self) -> Vec<Value> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+fn serve_stub_llm(
+    mut stream: TcpStream,
+    reply: &str,
+    delay: std::time::Duration,
+    recorded: &Mutex<Vec<Value>>,
+) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    loop {
+        let mut request_line = String::new();
+        if reader.read_line(&mut request_line)? == 0 {
+            return Ok(());
+        }
+        let mut content_length = 0;
+        loop {
+            let mut header = String::new();
+            if reader.read_line(&mut header)? == 0 || header == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = header.split_once(':')
+                && name.trim().eq_ignore_ascii_case("content-length")
+            {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0; content_length];
+        reader.read_exact(&mut body)?;
+        if let Ok(body) = serde_json::from_slice::<Value>(&body) {
+            recorded.lock().unwrap().push(body);
+        }
+        thread::sleep(delay);
+        let response_body = json!({
+            "id": "msg_stub",
+            "type": "message",
+            "role": "assistant",
+            "model": "stub",
+            "content": [ { "type": "text", "text": reply } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 0, "output_tokens": 0 }
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{response_body}",
+            response_body.len()
+        );
+        stream.write_all(response.as_bytes())?;
+        stream.flush()?;
+    }
+}
